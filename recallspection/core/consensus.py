@@ -6,7 +6,24 @@ class ConsensusEngine:
         self.threshold = threshold
         self.min_agents = min_agents
 
-    def reach_consensus(self, recalls):
-        if len(recalls) < self.min_agents: return None
-        # Weighted voting logic...
-        return True
+    def reach_consensus(self, recalls: List[Dict]) -> Dict:
+        if len(recalls) < self.min_agents:
+            return {"status": "REJECTED", "reason": "Insufficient Peer Data"}
+
+        votes = {}
+        for r in recalls:
+            label = r['label']
+            weight = r['similarity']
+            votes[label] = votes.get(label, 0) + weight
+
+        winner = max(votes, key=votes.get)
+        total_weight = sum(votes.values())
+        confidence = votes[winner] / total_weight
+
+        if confidence > self.threshold:
+            return {
+                "status": "ACCEPTED",
+                "label": winner,
+                "global_confidence": float(confidence)
+            }
+        return {"status": "DISPUTED", "reason": "Low Network Consensus"}
