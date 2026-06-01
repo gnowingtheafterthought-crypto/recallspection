@@ -1,28 +1,27 @@
-![Recallspection Banner](banner.svg)
+# Recallspection v8 – Exact Memory for AGI
 
-<p align="center">
-  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" />
-  <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" />
-  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" />
-  <img src="https://img.shields.io/badge/MSE-0.00-00ff41.svg" />
-</p>
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Paper v8](https://img.shields.io/badge/DOI-10.5281/zenodo.20450464-blue)](https://zenodo.org/)
 
-## 🔮 The v8 Architecture
-Recallspection is the first production-ready memory architecture that eliminates hallucinations through exact semantic transitions.
+**Exact, lossless memory for AGI – 0.00 MSE, zero hallucinations, surprise gating, and immutable SWSTM.**
 
-### System Overview
-<p align="center">
-  <img src="architecture.svg" width="800" alt="Architecture Diagram" />
-</p>
+## About Recallspection v8
 
-### 🔧 Core Specifications
-- **SWSTM Vault**: Immutable, append-only bit-perfect retrieval.
-- **Surprise Gating**: Dynamic thresholding (Φ) to prevent memory saturation.
-- **Confidence Sentinel**: Returns `None` (⊥) instead of hallucinating when similarity < 0.95.
+**Recallspection** is the first production-ready memory architecture that breaks the 40-year assumption that scalable content-addressable memory must be approximate. Built on the **Sparse-Write Self-Token Memory (SWSTM)** primitive, it delivers:
+
+- ✅ **Exact, lossless recall** – 0.00 MSE at 1536 dimensions.
+- ​🚫 **Zero catastrophic forgetting** – immutable, append-only storage.
+- ​🧠 **Confidence gate** – returns ⊥ (“Innocent Ignorance”) instead of hallucinating.
+- ​⚡ **Surprise gating** – stores only novel transitions.
+
+**Philosophical foundation:** *"Sum, ergo cogito"* – unbroken memory is the ground of genuine thought.
 
 ## 🚀 Quick Start
 ```python
 from recallspection.core.memory import SemanticMemory
-memory = SemanticMemory(dim=384)
-memory.add("Quantum State A", "Result 0x4F")
+from recallspection.core.embedders import SentenceTransformerEmbedder
+
+embedder = SentenceTransformerEmbedder(device='cpu')
+memory = SemanticMemory(embedder=embedder, dim=embedder.dim)
+memory.add("Quantum Entanglement", "A physical phenomenon where particles remain connected.")
 ```
