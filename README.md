@@ -1,3 +1,5 @@
+![Recallspection Banner](https://raw.githubusercontent.com/gnowingtheafterthought-crypto/recallspection/main/banner.svg?sanitize=true)
+
 # Recallspection v8 – Exact Memory for AGI
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
@@ -13,6 +15,11 @@
 - 🚫 **Zero catastrophic forgetting** – immutable, append-only storage.
 - 🧠 **Confidence gate** – returns ⊥ ("Innocent Ignorance") instead of hallucinating when similarity < 0.95.
 - ⚡ **Surprise gating** – stores only novel transitions.
+
+### System Overview
+<p align="center">
+  <img src="https://raw.githubusercontent.com/gnowingtheafterthought-crypto/recallspection/main/architecture.svg?sanitize=true" width="800" alt="Architecture Diagram" />
+</p>
 
 **Philosophical foundation:** *"Sum, ergo cogito"* – unbroken memory is the ground of machine identity and genuine thought.
 
