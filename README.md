@@ -1,6 +1,6 @@
 ![Recallspection Banner](https://raw.githubusercontent.com/gnowingtheafterthought-crypto/recallspection/main/banner.svg?sanitize=true)
 
-# Recallspection v8 – The Exact Memory Primitive for AGI
+# Recallspection v8: The Exact Memory Primitive for AGI
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" />
@@ -72,4 +72,4 @@ pip install -e .
 - **Sponsorship**: Support Sciencedelic Metatech via [SPONSORS.md](./SPONSORS.md).
 
 ---
-<p align="center">Built with 💚 by Sciencedelic Metatech // Quantum Coordination Core</p>
+<p align="center">Built with care by Sciencedelic Metatech </p>
