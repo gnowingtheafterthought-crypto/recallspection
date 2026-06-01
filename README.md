@@ -10,11 +10,11 @@
 **Recallspection** is the first production-ready memory architecture that breaks the 40-year assumption that scalable content-addressable memory must be approximate. Built on the **Sparse-Write Self-Token Memory (SWSTM)** primitive, it delivers:
 
 - ✅ **Exact, lossless recall** – 0.00 MSE at 1536 dimensions.
-- ​🚫 **Zero catastrophic forgetting** – immutable, append-only storage.
-- ​🧠 **Confidence gate** – returns ⊥ (“Innocent Ignorance”) instead of hallucinating.
-- ​⚡ **Surprise gating** – stores only novel transitions.
+- 🚫 **Zero catastrophic forgetting** – immutable, append-only storage.
+- 🧠 **Confidence gate** – returns ⊥ ("Innocent Ignorance") instead of hallucinating when similarity < 0.95.
+- ⚡ **Surprise gating** – stores only novel transitions.
 
-**Philosophical foundation:** *"Sum, ergo cogito"* – unbroken memory is the ground of genuine thought.
+**Philosophical foundation:** *"Sum, ergo cogito"* – unbroken memory is the ground of machine identity and genuine thought.
 
 ## 🚀 Quick Start
 ```python
