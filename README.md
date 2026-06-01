@@ -1,7 +1,7 @@
 ![Recallspection Banner](banner.svg)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+  <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" />
   <img src="https://img.shields.io/badge/Python-3.8+-blue.svg" />
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" />
   <img src="https://img.shields.io/badge/MSE-0.00-00ff41.svg" />
