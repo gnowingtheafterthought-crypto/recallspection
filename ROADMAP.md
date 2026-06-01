@@ -1,15 +1,15 @@
 # 🗺️ Recallspection v8 Roadmap
 
-### 🟢 Phase 1: Core Modularization (Complete)
-- [x] Tiered FAISS Architecture
-- [x] Sparse-Write Self-Token Memory (SWSTM)
-- [x] MIT License Standardization
-
-### 🟡 Phase 2: Quantum & Distributed (In Progress)
+### 🟢 Phase 1-4: Foundation & Alignment (Complete)
+- [x] Tiered FAISS & SWSTM Vault
 - [x] IBM Qiskit Hardware Integration
-- [ ] Qdrant Cloud Live Sync
-- [ ] Multi-agent Peer-to-Peer Consensus
+- [x] AGI Safety Alignment Sentinel
 
-### 🔴 Phase 3: AGI Alignment (Future)
-- [ ] 0.00 MSE Verification for Long-Horizon Reasoning
-- [ ] Deterministic Logic-Gating for Safety
+### 🔵 Phase 5: Multi-Agent Consensus (Current)
+- [x] Weighted Voting Consensus Engine
+- [x] Outlier Pruning & Global Truth Synchronization
+- [ ] Physical Network Hardware Integration
+
+### 🔴 Phase 6: Autonomous Evolution
+- [ ] Self-Optimizing Surprise Thresholds
+- [ ] Cross-Region Memory Sharding
