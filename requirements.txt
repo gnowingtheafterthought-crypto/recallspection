@@ -1,0 +1,11 @@
+streamlit
+fastapi
+uvicorn
+torch
+numpy
+pandas
+faiss-cpu
+sentence-transformers
+matplotlib
+pyarrow
+requests
