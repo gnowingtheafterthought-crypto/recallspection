@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="banner.png" alt="Recallspection Banner" width="800">
+  <img src="https://raw.githubusercontent.com/gnowingtheafterthought-crypto/recallspection/main/banner.png" alt="Recallspection Banner" width="800">
 </p>
 
 # 🧠 RECALLSPECTION v12 — THE EXACT MEMORY LAYER FOR AGI
