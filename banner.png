@@ -1,72 +1,33 @@
-import os
-import requests
 from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
-import zipfile
+import os
 
-def download_cinzel_font():
-    font_url = "https://fonts.google.com/download?family=Cinzel"
-    try:
-        print("📥 Downloading Cinzel font...")
-        response = requests.get(font_url)
-        with zipfile.ZipFile(BytesIO(response.content)) as z:
-            for file in z.namelist():
-                if file.endswith('.ttf') and 'Cinzel' in file:
-                    z.extract(file, '.')
-                    print(f"✅ Font downloaded: {file}")
-                    return file
-    except Exception as e:
-        print(f"⚠️ Could not download Cinzel font: {e}")
-        return None
-    return None
+# Create a simple banner (no external fonts needed)
+width, height = 1200, 400
+img = Image.new('RGB', (width, height), color=(20, 0, 40))
+draw = ImageDraw.Draw(img)
 
-def create_banner():
-    width, height = 1200, 400
-    bg_color = (20, 0, 40)
-    white = (255, 255, 255)
-    light_purple = (200, 200, 255)
-    accent_color = (100, 255, 200)
-    
-    img = Image.new('RGB', (width, height), color=bg_color)
-    draw = ImageDraw.Draw(img)
-    
-    try:
-        font_path = download_cinzel_font()
-        if font_path and os.path.exists(font_path):
-            font_title = ImageFont.truetype(font_path, 72)
-            font_sub = ImageFont.truetype(font_path, 28)
-            font_tag = ImageFont.truetype(font_path, 24)
-            print("✅ Using Cinzel font.")
-        else:
-            raise Exception("Cinzel not available")
-    except:
-        print("⚠️ Using default font.")
-        font_title = ImageFont.load_default()
-        font_sub = ImageFont.load_default()
-        font_tag = ImageFont.load_default()
-    
-    title = "RECALLSPECTION"
-    title_bbox = draw.textbbox((0, 0), title, font=font_title)
-    title_w = title_bbox[2] - title_bbox[0]
-    draw.text(((width - title_w) // 2, 30), title, fill=white, font=font_title)
-    
-    subtitle = "Exact Memory Layer for AGI"
-    sub_bbox = draw.textbbox((0, 0), subtitle, font=font_sub)
-    sub_w = sub_bbox[2] - sub_bbox[0]
-    draw.text(((width - sub_w) // 2, 120), subtitle, fill=light_purple, font=font_sub)
-    
-    tagline = "Powered by Sciencedelic Metatech"
-    tag_bbox = draw.textbbox((0, 0), tagline, font=font_tag)
-    tag_w = tag_bbox[2] - tag_bbox[0]
-    draw.text(((width - tag_w) // 2, 190), tagline, fill=accent_color, font=font_tag)
-    
-    draw.ellipse((30, 30, 80, 80), outline=(100, 200, 255), width=2)
-    draw.line((1100, 30, 1170, 100), fill=(100, 200, 255), width=2)
-    draw.text((40, height - 50), "v12", fill=(150, 150, 200), font=font_sub)
-    
-    img.save("banner.png", "PNG")
-    print("✅ Banner saved as banner.png")
-    return "banner.png"
+# Use default fonts (works everywhere)
+try:
+    font_title = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 72)
+except:
+    font_title = ImageFont.load_default()
+try:
+    font_sub = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 28)
+except:
+    font_sub = ImageFont.load_default()
+try:
+    font_tag = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf", 24)
+except:
+    font_tag = ImageFont.load_default()
 
-if __name__ == "__main__":
-    create_banner()
+# Title
+draw.text((60, 40), "RECALLSPECTION", fill=(255, 255, 255), font=font_title)
+# Subtitle
+draw.text((60, 150), "Exact Memory Layer for AGI", fill=(200, 200, 255), font=font_sub)
+# Tagline
+draw.text((60, 230), "Powered by Sciencedelic Metatech", fill=(100, 255, 200), font=font_tag)
+# Version
+draw.text((60, 330), "v12", fill=(150, 150, 200), font=font_sub)
+
+img.save("banner.png")
+print("✅ banner.png created!")
