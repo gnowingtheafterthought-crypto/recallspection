@@ -1,4 +1,4 @@
-README_CONTENT = """<p align="center">
+<p align="center">
   <img src="banner.png" alt="Recallspection Banner" width="800">
 </p>
 
