@@ -9,3 +9,5 @@ sentence-transformers
 matplotlib
 pyarrow
 requests
+supabase
+python-dotenv
