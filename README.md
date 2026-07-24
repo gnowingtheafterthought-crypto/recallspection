@@ -2,7 +2,7 @@
   <img src="banner.svg" alt="Recallspection Banner" width="800">
 </p>
 
-# 🧠 RECALLSPECTION v12 — THE EXACT MEMORY LAYER FOR AGI
+# 🧠 RECALLSPECTION v12: THE EXACT MEMORY LAYER FOR AGI
 
 > *"The 51‑hop limit is dead. Long live bounded drift."*
 
