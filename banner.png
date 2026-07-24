@@ -1,33 +1,30 @@
 from PIL import Image, ImageDraw, ImageFont
-import os
 
-# Create a simple banner (no external fonts needed)
+# Create a banner (1200x400)
 width, height = 1200, 400
 img = Image.new('RGB', (width, height), color=(20, 0, 40))
 draw = ImageDraw.Draw(img)
 
-# Use default fonts (works everywhere)
+# Fonts (fallback to default if custom not available)
 try:
-    font_title = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 72)
+    font_title = ImageFont.truetype("Arial.ttf", 72)
 except:
     font_title = ImageFont.load_default()
 try:
-    font_sub = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 28)
+    font_sub = ImageFont.truetype("Arial.ttf", 28)
 except:
     font_sub = ImageFont.load_default()
 try:
-    font_tag = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Italic.ttf", 24)
+    font_tag = ImageFont.truetype("Arial.ttf", 24)
 except:
     font_tag = ImageFont.load_default()
 
-# Title
-draw.text((60, 40), "RECALLSPECTION", fill=(255, 255, 255), font=font_title)
-# Subtitle
-draw.text((60, 150), "Exact Memory Layer for AGI", fill=(200, 200, 255), font=font_sub)
-# Tagline
-draw.text((60, 230), "Powered by Sciencedelic Metatech", fill=(100, 255, 200), font=font_tag)
-# Version
-draw.text((60, 330), "v12", fill=(150, 150, 200), font=font_sub)
+# Text
+draw.text((60, 40), "RECALLSPECTION", fill=(255,255,255), font=font_title)
+draw.text((60, 150), "Exact Memory Layer for AGI", fill=(200,200,255), font=font_sub)
+draw.text((60, 230), "Powered by Sciencedelic Metatech", fill=(100,255,200), font=font_tag)
+draw.text((60, 330), "v12", fill=(150,150,200), font=font_sub)
 
+# Save
 img.save("banner.png")
 print("✅ banner.png created!")
