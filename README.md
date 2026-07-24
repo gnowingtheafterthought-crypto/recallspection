@@ -1,10 +1,3 @@
-# ================================================================
-# 🧠 GENERATE RECALLSPECTION README.md (FULL)
-# ================================================================
-# Run this cell to create the complete README.md file.
-# The file will be saved in the current directory.
-# ================================================================
-
 README_CONTENT = """<p align="center">
   <img src="banner.png" alt="Recallspection Banner" width="800">
 </p>
