@@ -17,25 +17,43 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Recallspection API", version="v12")
+app = FastAPI(title="Recallspection API", version="v17")
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-# ---------- SUPABASE SETUP ----------
-SUPABASE_URL=os.getenv("SUPABASE_URL")
-SUPABASE_KEY=os.getenv("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+import requests # Add this at the very top of the file if it's not there!
 
-# 🛠️ FIX FOR SUPABASE 401 ERROR WITH NEW sb_secret_ KEYS
-# The new Supabase keys fail if passed in the Authorization header. 
-# We strip it out to prevent the "Invalid API key" database error.
-try:
-    if "Authorization" in supabase.postgrest.session.headers:
-        del supabase.postgrest.session.headers["Authorization"]
-    print("✅ Supabase client initialized. Stripped forbidden Authorization header.")
-except Exception as e:
-    print(f"Header cleanup warning: {e}")
+# ---------- AUTH (Supabase Raw Bypass) ----------
+def validate_api_key(api_key: str=Security(api_key_header)):
+    try:
+        # We bypass the supabase-py SDK because it secretly sends a forbidden 'Authorization' header
+        url = f"{SUPABASE_URL}/rest/v1/users"
+        headers = {
+            "apikey": SUPABASE_KEY,
+            "Content-Type": "application/json"
+            # NO 'Authorization' header! This fixes the 401 sb_secret bug.
+        }
+        params = {
+            "select": "id,plan",
+            "api_key": f"eq.{api_key}",
+            "is_active": "eq.true"
+        }
+        
+        resp = requests.get(url, headers=headers, params=params)
+        
+        if resp.status_code == 401:
+            # If Supabase STILL rejects it, the sb_secret key in your Render ENV is wrong.
+            raise HTTPException(status_code=500, detail="Supabase rejected the sb_secret key. Check Render ENV.")
+        
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if not data:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+        return data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 # ---------- ENGINE (Full Implementation) ----------
 class FixedPrototypeSWSTM:
