@@ -21,11 +21,21 @@ app = FastAPI(title="Recallspection API", version="v12")
 api_key_header = APIKeyHeader(name="X-API-Key")
 
 # ---------- SUPABASE SETUP ----------
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_URL=os.getenv("SUPABASE_URL")
+SUPABASE_KEY=os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# 🛠️ FIX FOR SUPABASE 401 ERROR WITH NEW sb_secret_ KEYS
+# The new Supabase keys fail if passed in the Authorization header. 
+# We strip it out to prevent the "Invalid API key" database error.
+try:
+    if "Authorization" in supabase.postgrest.session.headers:
+        del supabase.postgrest.session.headers["Authorization"]
+    print("✅ Supabase client initialized. Stripped forbidden Authorization header.")
+except Exception as e:
+    print(f"Header cleanup warning: {e}")
 
 # ---------- ENGINE (Full Implementation) ----------
 class FixedPrototypeSWSTM:
