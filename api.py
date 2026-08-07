@@ -1,7 +1,8 @@
 # ================================================================
-# 🧠 RECALLSPECTION API v12 — Supabase Edition
+# 🧠 RECALLSPECTION API v17 — Supabase Edition (Ultimate Patch)
 # ================================================================
 import os
+import requests
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -11,8 +12,6 @@ import hashlib
 from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
-import uvicorn
-from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,40 +19,11 @@ load_dotenv()
 app = FastAPI(title="Recallspection API", version="v17")
 api_key_header = APIKeyHeader(name="X-API-Key")
 
-import requests # Add this at the very top of the file if it's not there!
-
-# ---------- AUTH (Supabase Raw Bypass) ----------
-def validate_api_key(api_key: str=Security(api_key_header)):
-    try:
-        # We bypass the supabase-py SDK because it secretly sends a forbidden 'Authorization' header
-        url = f"{SUPABASE_URL}/rest/v1/users"
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Content-Type": "application/json"
-            # NO 'Authorization' header! This fixes the 401 sb_secret bug.
-        }
-        params = {
-            "select": "id,plan",
-            "api_key": f"eq.{api_key}",
-            "is_active": "eq.true"
-        }
-        
-        resp = requests.get(url, headers=headers, params=params)
-        
-        if resp.status_code == 401:
-            # If Supabase STILL rejects it, the sb_secret key in your Render ENV is wrong.
-            raise HTTPException(status_code=500, detail="Supabase rejected the sb_secret key. Check Render ENV.")
-        
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if not data:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+# ---------- SUPABASE SETUP ----------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
 
 # ---------- ENGINE (Full Implementation) ----------
 class FixedPrototypeSWSTM:
@@ -61,18 +31,22 @@ class FixedPrototypeSWSTM:
         self.dim = dim
         self.num_prototypes = num_prototypes
         self.conf_thresh = conf_thresh
+        
         self.prototypes = torch.randn(num_prototypes, dim)
         self.prototypes = F.normalize(self.prototypes, p=2, dim=1)
         self.prototypes_np = self.prototypes.numpy().astype('float32')
+        
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(self.prototypes_np)
         self.slots = {i: [] for i in range(num_prototypes)}
+        
         self.vec_to_id = {}
         self.id_to_vec = {}
         self.next_id = 0
         self.graph = defaultdict(list)
         self.next_ptr_map = {}
         self.transition_history = defaultdict(list)
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.prototypes = self.prototypes.to(self.device)
 
@@ -101,18 +75,23 @@ class FixedPrototypeSWSTM:
             subject_vec = torch.from_numpy(subject_vec).float().to(self.device)
         if object_vec is not None and isinstance(object_vec, np.ndarray):
             object_vec = torch.from_numpy(object_vec).float().to(self.device)
+
         raw_sub = subject_vec.detach().clone()
         sub = self._normalize(subject_vec)
         sub_id = self._get_id(sub)
+
         if object_vec is not None:
             raw_obj = object_vec.detach().clone()
             obj = self._normalize(object_vec)
             obj_id = self._get_id(obj)
             rel = (obj - sub).detach()
+            
             if sub_id in self.next_ptr_map and self.next_ptr_map[sub_id] != obj_id and not allow_overwrite:
                 return False
+                
             if (sub_id, obj_id) not in self.transition_history[sub_id]:
                 self.transition_history[sub_id].append(obj_id)
+                
             slot_id = self._get_routing_slots(sub)[0]
             self.slots[slot_id].append((sub.detach(), raw_sub, value or f"fact_{sub_id}", obj.detach(), raw_obj))
             self.next_ptr_map[sub_id] = obj_id
@@ -126,17 +105,21 @@ class FixedPrototypeSWSTM:
     def retrieve(self, query_vec, return_raw=True):
         if isinstance(query_vec, np.ndarray):
             query_vec = torch.from_numpy(query_vec).float().to(self.device)
+            
         query = self._normalize(query_vec)
         slots = self._get_routing_slots(query)
         best_sim, best_item = -1.0, None
+        
         for slot_id in slots:
             for norm_sub, raw_sub, value, norm_obj, raw_obj in self.slots.get(slot_id, []):
                 sim = torch.dot(query, norm_sub).item()
                 if sim > best_sim:
                     best_sim = sim
                     best_item = (raw_sub, value, raw_obj)
+                    
         if best_sim < self.conf_thresh:
             return None, None, best_sim, False
+            
         if return_raw:
             return best_item[0], best_item[1], best_sim, True
         else:
@@ -145,8 +128,10 @@ class FixedPrototypeSWSTM:
     def compose_path(self, start_vec, end_vec):
         start_id = self._get_id(self._normalize(start_vec))
         end_id = self._get_id(self._normalize(end_vec))
+        
         if start_id == end_id:
             return torch.zeros(self.dim).to(self.device)
+            
         queue, visited = deque([start_id]), {start_id}
         while queue:
             curr = queue.popleft()
@@ -189,112 +174,7 @@ class ChainRequest(BaseModel):
     shift: list
     hops: int = 10
 
-# ---------- AUTH (Supabase) ----------
+# ---------- AUTH (Supabase Raw Bypass) ----------
 def validate_api_key(api_key: str = Security(api_key_header)):
     try:
-        resp = supabase.table("users").select("id", "plan").eq("api_key", api_key).eq("is_active", True).execute()
-        if not resp.data:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return resp.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-# ---------- ENDPOINTS ----------
-@app.post("/store")
-def store(req: StoreRequest, user=Security(validate_api_key)):
-    subj = torch.tensor(req.subject, dtype=torch.float32)
-    obj = torch.tensor(req.object, dtype=torch.float32)
-    engine.store(subj, obj, value=req.value)
-    return {"status": "stored"}
-
-@app.post("/retrieve")
-def retrieve(req: RetrieveRequest, user=Security(validate_api_key)):
-    query = torch.tensor(req.query, dtype=torch.float32)
-    result, value, sim, conf = engine.retrieve(query, return_raw=req.return_raw)
-    if conf:
-        return {"value": value, "similarity": sim, "found": True}
-    return {"found": False, "similarity": sim}
-
-@app.post("/compose")
-def compose(req: ComposeRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    end = torch.tensor(req.end, dtype=torch.float32)
-    rel = engine.compose_path(start, end)
-    if rel is not None:
-        return {"relation": rel.tolist()}
-    return {"found": False}
-
-@app.post("/chain")
-def chain(req: ChainRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    shift = torch.tensor(req.shift, dtype=torch.float32)
-    hops = engine.run_chain(start, shift, req.hops)
-    return {"hops": hops}
-
-@app.get("/")
-def root():
-    return {"name": "Recallspection API", "status": "online", "version": "v12"}
-# ---------- MODELS ----------
-class StoreRequest(BaseModel):
-    subject: list
-    object: list
-    value: str = None
-
-class RetrieveRequest(BaseModel):
-    query: list
-    return_raw: bool = True
-
-class ComposeRequest(BaseModel):
-    start: list
-    end: list
-
-class ChainRequest(BaseModel):
-    start: list
-    shift: list
-    hops: int = 10
-
-# ---------- AUTH (Supabase) ----------
-def validate_api_key(api_key: str = Security(api_key_header)):
-    try:
-        resp = supabase.table("users").select("id", "plan").eq("api_key", api_key).eq("is_active", True).execute()
-        if not resp.data:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return resp.data[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-
-# ---------- ENDPOINTS ----------
-@app.post("/store")
-def store(req: StoreRequest, user=Security(validate_api_key)):
-    subj = torch.tensor(req.subject, dtype=torch.float32)
-    obj = torch.tensor(req.object, dtype=torch.float32)
-    engine.store(subj, obj, value=req.value)
-    return {"status": "stored"}
-
-@app.post("/retrieve")
-def retrieve(req: RetrieveRequest, user=Security(validate_api_key)):
-    query = torch.tensor(req.query, dtype=torch.float32)
-    result, value, sim, conf = engine.retrieve(query, return_raw=req.return_raw)
-    if conf:
-        return {"value": value, "similarity": sim, "found": True}
-    return {"found": False, "similarity": sim}
-
-@app.post("/compose")
-def compose(req: ComposeRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    end = torch.tensor(req.end, dtype=torch.float32)
-    rel = engine.compose_path(start, end)
-    if rel is not None:
-        return {"relation": rel.tolist()}
-    return {"found": False}
-
-@app.post("/chain")
-def chain(req: ChainRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    shift = torch.tensor(req.shift, dtype=torch.float32)
-    hops = engine.run_chain(start, shift, req.hops)
-    return {"hops": hops}
-
-@app.get("/")
-def root():
-    return {"name": "Recallspection API", "status": "online", "version": "v12"}
+        # We completely bypass the supabase-py SDK.
