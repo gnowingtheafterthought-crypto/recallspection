@@ -4,7 +4,7 @@
 **Author:** Eliam Raell  
 **Affiliation:** Sciencedelic Metatech — Verifiable Memory & Autonomous Systems  
 **Date:** August 2026  
-**DOI:** Pending / [Zenodo Record]
+**DOI:** [Raell, E. (2026). Recallspection v16: Breaking the 51-Hop Wall with Deterministic Verification in High-Dimensional Knowledge Graphs (Version v16). Sciencedelic Metatech. https://doi.org/10.5281/zenodo.21762791]
 
 ---
 
