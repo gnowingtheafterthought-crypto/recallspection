@@ -11,7 +11,7 @@
   <text x="50" y="240" font-family="Cinzel, Georgia, serif" font-size="24" fill="#64ffc8">Powered by Sciencedelic Metatech</text>
   
   <!-- Version -->
-  <text x="50" y="340" font-family="Cinzel, Georgia, serif" font-size="20" fill="#9696c8">v12</text>
+  <text x="50" y="340" font-family="Cinzel, Georgia, serif" font-size="20" fill="#9696c8">v17</text>
   
   <!-- Decorative elements -->
   <circle cx="1150" cy="50" r="30" stroke="#64c8ff" stroke-width="2" fill="none"/>
