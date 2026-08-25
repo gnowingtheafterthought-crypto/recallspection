@@ -4,7 +4,7 @@
 
 # 🧠 RECALLSPECTION v17.0.0: THE CRYPTOGRAPHIC EXACT MEMORY LAYER
 
-> *"Every major AI memory benchmark is mathematically incapable of defeating a 200‑line cryptographic hash table — and it runs on a phone."*
+> *"Every major AI memory benchmark is mathematically incapable of defeating a 200‑line cryptographic hash table and it runs on a phone."*
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gnowingtheafterthought-crypto/recallspection/blob/main/demo.ipynb)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -25,7 +25,7 @@
 | **Dependencies** | **None (stdlib)** | `pip install` and run. No PyTorch, no FAISS, no GPU. |
 | **Platform** | **iOS, Linux, macOS** | Validated on iPhone. Edge-ready. |
 
-> **The bottom line:** Every major AI memory benchmark (BEAM 10M, LoCoMo, AML, AMA-Bench) is mathematically incapable of defeating a 200‑line cryptographic hash table — and it runs on a phone.
+> **The bottom line:** Every major AI memory benchmark (BEAM 10M, LoCoMo, AML, AMA-Bench) is mathematically incapable of defeating a 200‑line cryptographic hash table and it runs on a phone.
 
 ---
 
