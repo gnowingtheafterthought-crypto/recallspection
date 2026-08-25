@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="banner.svg" alt="Recallspection Banner" width="800">
+  <img src="banner_v17.svg" alt="Recallspection Banner — Cinematic v17" width="800">
 </p>
 
 # 🧠 RECALLSPECTION v17.0.0: THE CRYPTOGRAPHIC EXACT MEMORY LAYER
