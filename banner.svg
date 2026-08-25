@@ -1,19 +1,85 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400">
-  <rect width="1200" height="400" fill="#1a0a2a"/>
-  
-  <!-- Title -->
-  <text x="50" y="100" font-family="Cinzel, Georgia, serif" font-size="72" fill="#ffffff" font-weight="bold">RECALLSPECTION</text>
-  
+  <defs>
+    <!-- Background radial gradient (cinematic deep space) -->
+    <radialGradient id="bgGrad" cx="64%" cy="46%" r="82%" fx="64%" fy="46%">
+      <stop offset="0%" stop-color="#06163A"/>
+      <stop offset="100%" stop-color="#02001A"/>
+    </radialGradient>
+
+    <!-- Metallic gradient for main title -->
+    <linearGradient id="metalGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F8F9FC"/>
+      <stop offset="18%" stop-color="#E2E6ED"/>
+      <stop offset="45%" stop-color="#C8CED8"/>
+      <stop offset="72%" stop-color="#959CAB"/>
+      <stop offset="100%" stop-color="#ECEEF4"/>
+    </linearGradient>
+
+    <!-- Lens flare gradients -->
+    <radialGradient id="flareCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F8FFFF" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#F8FFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="flareHalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5ABEFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#5ABEFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="flareStreak" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7CD6FF" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#7CD6FF" stop-opacity="0.32"/>
+      <stop offset="100%" stop-color="#7CD6FF" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Drop shadow for text -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <!-- Glow filter for lens flare elements -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="15" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="url(#bgGrad)"/>
+
+  <!-- Decorative accents (cinematic framing) -->
+  <!-- Bottom accent line -->
+  <line x1="40" y1="370" x2="1160" y2="370" stroke="#64c8ff" stroke-width="1.5" opacity="0.5"/>
+  <!-- Left vertical line -->
+  <line x1="70" y1="80" x2="70" y2="320" stroke="#64c8ff" stroke-width="1" opacity="0.25"/>
+  <!-- Top right circle -->
+  <circle cx="1110" cy="60" r="16" stroke="#64c8ff" stroke-width="1.5" fill="none" opacity="0.35"/>
+  <!-- Top right small dot -->
+  <circle cx="1110" cy="60" r="3" fill="#64c8ff" opacity="0.5"/>
+
+  <!-- Lens Flare (positioned at the intersection of "P" and "E" in "SPECTION") -->
+  <g transform="translate(740, 195)">
+    <!-- Halo -->
+    <circle cx="0" cy="0" r="130" fill="url(#flareHalo)" filter="url(#glow)"/>
+    <!-- Core glow -->
+    <circle cx="0" cy="0" r="22" fill="url(#flareCore)" filter="url(#glow)"/>
+    <!-- Horizontal streak -->
+    <rect x="-420" y="-4" width="840" height="8" fill="url(#flareStreak)" filter="url(#glow)" opacity="0.6"/>
+    <!-- Diagonal beam (rotated ellipse) -->
+    <ellipse cx="0" cy="0" rx="320" ry="5" transform="rotate(-45)" fill="#79D7FF" opacity="0.2" filter="url(#glow)"/>
+    <!-- Secondary large glow -->
+    <circle cx="0" cy="0" r="220" fill="#4AAEFF" opacity="0.07" filter="url(#glow)"/>
+  </g>
+
+  <!-- Main Title -->
+  <text x="600" y="120" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="72" font-weight="400" letter-spacing="4.68" fill="url(#metalGrad)" stroke="#F1F4FF" stroke-width="0.5" filter="url(#shadow)" text-anchor="middle">RECALLSPECTION</text>
+
   <!-- Subtitle -->
-  <text x="50" y="180" font-family="Cinzel, Georgia, serif" font-size="28" fill="#c8c8ff">Exact Memory Layer for AGI</text>
-  
+  <text x="600" y="188" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="28" font-weight="400" fill="#c8c8ff" text-anchor="middle" letter-spacing="2">Exact Memory Layer for AGI</text>
+
   <!-- Tagline -->
-  <text x="50" y="240" font-family="Cinzel, Georgia, serif" font-size="24" fill="#64ffc8">Powered by Sciencedelic Metatech</text>
-  
+  <text x="600" y="238" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="22" fill="#64ffc8" text-anchor="middle" letter-spacing="1.5">Powered by Sciencedelic Metatech</text>
+
   <!-- Version -->
-  <text x="50" y="340" font-family="Cinzel, Georgia, serif" font-size="20" fill="#9696c8">v17</text>
-  
-  <!-- Decorative elements -->
-  <circle cx="1150" cy="50" r="30" stroke="#64c8ff" stroke-width="2" fill="none"/>
-  <line x1="1100" y1="350" x2="1170" y2="350" stroke="#64c8ff" stroke-width="2"/>
+  <text x="600" y="310" font-family="'Cinzel', 'Trajan Pro', 'Georgia', serif" font-size="20" fill="#9696c8" text-anchor="middle" letter-spacing="3">v17</text>
 </svg>
