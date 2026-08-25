@@ -16,9 +16,6 @@ Usage:
     memory = ExactMemory()
     memory.add("user_123", {"preference": "dark_mode"})
     result = memory.get("user_123")  # returns exact dict, or None if tampered
-
-Quorum verification ensures that even if metadata is corrupted, the system
-refuses to return the value.
 """
 
 import sys
