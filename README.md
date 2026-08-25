@@ -38,7 +38,7 @@ It provides:
 1. **A Cryptographic Exact Core** (`ExactMemory`): Pure Python stdlib. SHA3‑256 + zlib. 100% EMR. Tamper‑evident. 8 µs reads.
 2. **A Semantic Layer** (`CompleteObserver`): Optional FAISS + quorum consensus for natural language discovery.
 
-**Why this matters:** Current AI systems use probabilistic embeddings for *everything* — including facts that must be exact. This leads to hallucinations. Recallspection uses deterministic hashing for facts, and keeps probabilistic search for discovery. It's the difference between a *database* and a *search engine*.
+**Why this matters:** Current AI systems use probabilistic embeddings for *everything* including facts that must be exact. This leads to hallucinations. Recallspection uses deterministic hashing for facts, and keeps probabilistic search for discovery. It's the difference between a *database* and a *search engine*.
 
 ---
 
