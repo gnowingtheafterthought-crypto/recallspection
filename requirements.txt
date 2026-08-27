@@ -11,3 +11,9 @@ pyarrow
 requests
 supabase
 python-dotenv
+# Exact core (ExactMemory) requires NO external dependencies — pure Python stdlib.
+# These are only required for the API server.
+
+fastapi
+uvicorn
+python-multipart
