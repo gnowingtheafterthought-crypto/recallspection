@@ -1,13 +1,19 @@
 """
-Recallspection v17
-==================
-Deterministic, self-healing, quorum-verified cognitive infrastructure.
+Recallspection — Exact + Semantic Memory for AI Agents
 
-"Death to approximation. Long live the Complete Observer."
+This package provides:
+- `ExactMemory`: A cryptographic, stdlib-only, exact key-value store.
+- `CompleteObserver`: A semantic memory layer (FAISS + quorum consensus).
 """
 
 from .observer import CompleteObserver
+from .exact import ExactMemory, ExactConfig
 
 __version__ = "17.0.0"
 __author__ = "Sciencedelic Metatech"
-__all__ = ["CompleteObserver"]
+
+__all__ = [
+    "CompleteObserver",
+    "ExactMemory",
+    "ExactConfig",
+]
