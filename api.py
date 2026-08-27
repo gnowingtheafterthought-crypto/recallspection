@@ -1,243 +1,482 @@
-# ================================================================
-# 🧠 RECALLSPECTION API v12 — Supabase Edition (Ultimate Patch)
-# ================================================================
+#!/usr/bin/env python3
+"""
+RECALLSPECTION API — Production-grade Exact Memory Server
+
+Upgraded to v17:
+- Cryptographic exact core (SHA3-256 + zlib)
+- Persistent memory (saves to memory.db)
+- Web interface served at root
+- Endpoints: /chat, /history, /stats, /forget
+
+Deployment:
+    uvicorn api:app --host 0.0.0.0 --port 8000
+
+Live at:
+    https://recallspection.onrender.com
+"""
+
 import os
-import requests
-import torch
-import torch.nn.functional as F
-import numpy as np
-import faiss
-from collections import defaultdict, deque
+import sys
+import json
+import time
+import random
+import re
 import hashlib
-from fastapi import FastAPI, HTTPException, Security
-from fastapi.security import APIKeyHeader
+import zlib
+import struct
+import pickle
+from typing import Dict, Any, Optional, List, Tuple
+from dataclasses import dataclass
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
-load_dotenv()
+# -----------------------------------------------------------------------------
+# 1. EXACTMEMORY CORE (with Persistence)
+# -----------------------------------------------------------------------------
+try:
+    import blake3
+    BLAKE3_AVAILABLE = True
+except ImportError:
+    BLAKE3_AVAILABLE = False
 
-app = FastAPI(title="Recallspection API", version="v12")
-api_key_header = APIKeyHeader(name="X-API-Key")
+@dataclass
+class ExactConfig:
+    quorum_size: int = 3
+    compress: bool = True
+    hash_algorithm: str = "blake3" if BLAKE3_AVAILABLE else "sha3_256"
 
-# ---------- SUPABASE SETUP ----------
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise RuntimeError("Missing SUPABASE_URL or SUPABASE_KEY environment variables")
+class ExactMemory:
+    def __init__(self, config: Optional[ExactConfig] = None):
+        self.config = config or ExactConfig()
+        self._storage: Dict[str, bytes] = {}
+        self._metadata: Dict[str, bytes] = {}
+        self._write_count = 0
+        self._read_count = 0
+        self._verification_failures = 0
+        self._hash_len = 32
 
-# ---------- ENGINE (Full Implementation) ----------
-class FixedPrototypeSWSTM:
-    def __init__(self, dim=50, num_prototypes=256, conf_thresh=0.85):
-        self.dim = dim
-        self.num_prototypes = num_prototypes
-        self.conf_thresh = conf_thresh
-        
-        self.prototypes = torch.randn(num_prototypes, dim)
-        self.prototypes = F.normalize(self.prototypes, p=2, dim=1)
-        self.prototypes_np = self.prototypes.numpy().astype('float32')
-        
-        self.index = faiss.IndexFlatIP(dim)
-        self.index.add(self.prototypes_np)
-        self.slots = {i: [] for i in range(num_prototypes)}
-        
-        self.vec_to_id = {}
-        self.id_to_vec = {}
-        self.next_id = 0
-        self.graph = defaultdict(list)
-        self.next_ptr_map = {}
-        self.transition_history = defaultdict(list)
-        
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.prototypes = self.prototypes.to(self.device)
+    def _hash(self, data: bytes) -> bytes:
+        if self.config.hash_algorithm == "blake3" and BLAKE3_AVAILABLE:
+            return blake3.blake3(data).digest()
+        return hashlib.sha3_256(data).digest()
 
-    def _normalize(self, v):
-        if isinstance(v, np.ndarray):
-            v = torch.from_numpy(v).float()
-        return F.normalize(v, p=2, dim=0) if v.dim() == 1 else F.normalize(v, p=2, dim=1)
+    def _pack_metadata(self, q_hashes: List[bytes], v_hash: bytes, ts: float) -> bytes:
+        return b''.join(q_hashes) + v_hash + struct.pack('<d', ts)
 
-    def _get_id(self, vec):
-        vec = self._normalize(vec)
-        key = vec.detach().cpu().numpy().tobytes()
-        md5 = hashlib.md5(key).digest()
-        if md5 not in self.vec_to_id:
-            self.vec_to_id[md5] = self.next_id
-            self.id_to_vec[self.next_id] = vec.detach()
-            self.next_id += 1
-        return self.vec_to_id[md5]
+    def _unpack_metadata(self, packed: bytes) -> Tuple[List[bytes], bytes, float]:
+        h = self._hash_len
+        q = self.config.quorum_size
+        qh = [packed[i*h:(i+1)*h] for i in range(q)]
+        off = q*h
+        vh = packed[off:off+h]
+        ts = struct.unpack('<d', packed[off+h:off+h+8])[0]
+        return qh, vh, ts
 
-    def _get_routing_slots(self, vec):
-        vec_np = vec.detach().cpu().numpy().astype('float32').reshape(1, -1)
-        distances, indices = self.index.search(vec_np, 1)
-        return [int(indices[0][0])]
+    def add(self, key: str, value: Any) -> bool:
+        try:
+            v_bytes = json.dumps(value, sort_keys=True).encode('utf-8')
+            v_hash = self._hash(v_bytes)
+            if self.config.compress:
+                stored = zlib.compress(v_bytes, level=6)
+            else:
+                stored = v_bytes
 
-    def store(self, subject_vec, object_vec=None, value=None, allow_overwrite=False):
-        if isinstance(subject_vec, np.ndarray):
-            subject_vec = torch.from_numpy(subject_vec).float().to(self.device)
-        if object_vec is not None and isinstance(object_vec, np.ndarray):
-            object_vec = torch.from_numpy(object_vec).float().to(self.device)
+            key_b = key.encode()
+            base = self._hash(key_b)
+            q_hashes = [self._hash(key_b + base + str(i).encode()) for i in range(self.config.quorum_size)]
 
-        raw_sub = subject_vec.detach().clone()
-        sub = self._normalize(subject_vec)
-        sub_id = self._get_id(sub)
-
-        if object_vec is not None:
-            raw_obj = object_vec.detach().clone()
-            obj = self._normalize(object_vec)
-            obj_id = self._get_id(obj)
-            rel = (obj - sub).detach()
-            
-            if sub_id in self.next_ptr_map and self.next_ptr_map[sub_id] != obj_id and not allow_overwrite:
-                return False
-                
-            if (sub_id, obj_id) not in self.transition_history[sub_id]:
-                self.transition_history[sub_id].append(obj_id)
-                
-            slot_id = self._get_routing_slots(sub)[0]
-            self.slots[slot_id].append((sub.detach(), raw_sub, value or f"fact_{sub_id}", obj.detach(), raw_obj))
-            self.next_ptr_map[sub_id] = obj_id
-            self.graph[sub_id].append((obj_id, rel))
+            self._storage[key] = stored
+            self._metadata[key] = self._pack_metadata(q_hashes, v_hash, time.time())
+            self._write_count += 1
             return True
-        else:
-            slot_id = self._get_routing_slots(sub)[0]
-            self.slots[slot_id].append((sub.detach(), raw_sub, value or f"key_{sub_id}", None, None))
-            return True
+        except Exception:
+            return False
 
-    def retrieve(self, query_vec, return_raw=True):
-        if isinstance(query_vec, np.ndarray):
-            query_vec = torch.from_numpy(query_vec).float().to(self.device)
-            
-        query = self._normalize(query_vec)
-        slots = self._get_routing_slots(query)
-        best_sim, best_item = -1.0, None
-        
-        for slot_id in slots:
-            for norm_sub, raw_sub, value, norm_obj, raw_obj in self.slots.get(slot_id, []):
-                sim = torch.dot(query, norm_sub).item()
-                if sim > best_sim:
-                    best_sim = sim
-                    best_item = (raw_sub, value, raw_obj)
-                    
-        if best_sim < self.conf_thresh:
-            return None, None, best_sim, False
-            
-        if return_raw:
-            return best_item[0], best_item[1], best_sim, True
-        else:
-            return best_item[2], best_item[1], best_sim, True
+    def get(self, key: str) -> Optional[Any]:
+        self._read_count += 1
+        if key not in self._storage:
+            return None
+        stored = self._storage[key]
+        packed = self._metadata.get(key)
+        if packed is None:
+            return None
+        try:
+            qh, vh, ts = self._unpack_metadata(packed)
+            key_b = key.encode()
+            base = self._hash(key_b)
+            for i in range(self.config.quorum_size):
+                if qh[i] != self._hash(key_b + base + str(i).encode()):
+                    self._verification_failures += 1
+                    return None
+            if self.config.compress:
+                v_bytes = zlib.decompress(stored)
+            else:
+                v_bytes = stored
+            if self._hash(v_bytes) != vh:
+                self._verification_failures += 1
+                return None
+            return json.loads(v_bytes.decode())
+        except Exception:
+            return None
 
-    def compose_path(self, start_vec, end_vec):
-        start_id = self._get_id(self._normalize(start_vec))
-        end_id = self._get_id(self._normalize(end_vec))
-        
-        if start_id == end_id:
-            return torch.zeros(self.dim).to(self.device)
-            
-        queue, visited = deque([start_id]), {start_id}
-        while queue:
-            curr = queue.popleft()
-            for nbr, _ in self.graph.get(curr, []):
-                if nbr == end_id:
-                    return self.id_to_vec[end_id] - self.id_to_vec[start_id]
-                if nbr not in visited:
-                    visited.add(nbr)
-                    queue.append(nbr)
-        return None
-
-    def run_chain(self, start_vec, shift, num_hops):
-        current = self._normalize(start_vec)
-        successes = 0
-        for _ in range(num_hops):
-            nxt = self._normalize(current + shift)
-            self.store(current, nxt, value=f"step_{successes+1}")
-            current = nxt
-            successes += 1
-        return successes
-
-engine = FixedPrototypeSWSTM(dim=50)
-
-# ---------- MODELS ----------
-class StoreRequest(BaseModel):
-    subject: list
-    object: list
-    value: str = None
-
-class RetrieveRequest(BaseModel):
-    query: list
-    return_raw: bool = True
-
-class ComposeRequest(BaseModel):
-    start: list
-    end: list
-
-class ChainRequest(BaseModel):
-    start: list
-    shift: list
-    hops: int = 10
-
-# ---------- AUTH (Supabase Raw Bypass) ----------
-def validate_api_key(api_key: str = Security(api_key_header)):
-    try:
-        # We completely bypass the supabase-py SDK. It secretly sends a forbidden 
-        # 'Authorization' header which causes the 401 error with new sb_secret keys.
-        url = f"{SUPABASE_URL}/rest/v1/users"
-        headers = {
-            "apikey": SUPABASE_KEY,
-            "Content-Type": "application/json"
+    def stats(self) -> Dict[str, Any]:
+        return {
+            'writes': self._write_count,
+            'reads': self._read_count,
+            'verification_failures': self._verification_failures,
+            'stored': len(self._storage),
+            'exact_match_ratio': 1.0 if self._verification_failures == 0 else 0.0,
         }
-        params = {
-            "select": "id,plan",
-            "api_key": f"eq.{api_key}",
-            "is_active": "eq.true"
+
+    def clear(self):
+        self._storage.clear()
+        self._metadata.clear()
+        self._write_count = 0
+        self._read_count = 0
+        self._verification_failures = 0
+
+    def save(self, filename: str = "memory.db"):
+        data = {
+            'storage': self._storage,
+            'metadata': self._metadata,
+            'write_count': self._write_count,
+            'read_count': self._read_count,
+            'verification_failures': self._verification_failures,
         }
-        
-        resp = requests.get(url, headers=headers, params=params)
-        
-        if resp.status_code == 401:
-            raise HTTPException(status_code=500, detail="Supabase rejected the sb_secret key. Double check Render ENV.")
-        
-        resp.raise_for_status()
-        data = resp.json()
-        
-        if not data:
-            raise HTTPException(status_code=401, detail="Invalid API key")
-        return data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        with open(filename, 'wb') as f:
+            pickle.dump(data, f)
 
-# ---------- ENDPOINTS ----------
-@app.post("/store")
-def store(req: StoreRequest, user=Security(validate_api_key)):
-    subj = torch.tensor(req.subject, dtype=torch.float32)
-    obj = torch.tensor(req.object, dtype=torch.float32)
-    engine.store(subj, obj, value=req.value)
-    return {"status": "stored"}
+    def load(self, filename: str = "memory.db"):
+        if not os.path.exists(filename):
+            return
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+        self._storage = data['storage']
+        self._metadata = data['metadata']
+        self._write_count = data['write_count']
+        self._read_count = data['read_count']
+        self._verification_failures = data['verification_failures']
 
-@app.post("/retrieve")
-def retrieve(req: RetrieveRequest, user=Security(validate_api_key)):
-    query = torch.tensor(req.query, dtype=torch.float32)
-    result, value, sim, conf = engine.retrieve(query, return_raw=req.return_raw)
-    if conf:
-        return {"value": value, "similarity": sim, "found": True}
-    return {"found": False, "similarity": sim}
+# -----------------------------------------------------------------------------
+# 2. RULE-BASED NLP ENGINE (StdlibMind)
+# -----------------------------------------------------------------------------
+class StdlibMind:
+    def __init__(self, memory: ExactMemory):
+        self.memory = memory
+        self.memory.add("agent_name", "Recallspection Assistant")
+        self.memory.add("session_start", time.time())
 
-@app.post("/compose")
-def compose(req: ComposeRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    end = torch.tensor(req.end, dtype=torch.float32)
-    rel = engine.compose_path(start, end)
-    if rel is not None:
-        return {"relation": rel.tolist()}
-    return {"found": False}
+        self.rules = [
+            (r"hi|hello|hey|howdy", self.respond_greeting),
+            (r"good morning|good afternoon|good evening", self.respond_greeting),
+            (r"my name is (\w+)", self.remember_name),
+            (r"i am (\w+)", self.remember_name),
+            (r"i like (.*)", self.remember_preference),
+            (r"i prefer (.*)", self.remember_preference),
+            (r"my favorite (.*) is (.*)", self.remember_favorite),
+            (r"what is my name\??", self.ask_name),
+            (r"who am i\??", self.ask_name),
+            (r"what do i like\??", self.ask_preference),
+            (r"what is my favorite (.*)", self.ask_favorite),
+            (r"what time is it", self.ask_time),
+            (r"how many memories do you have", self.ask_memory_count),
+            (r"what do you remember", self.ask_all_memories),
+            (r".*", self.fallback),
+        ]
 
-@app.post("/chain")
-def chain(req: ChainRequest, user=Security(validate_api_key)):
-    start = torch.tensor(req.start, dtype=torch.float32)
-    shift = torch.tensor(req.shift, dtype=torch.float32)
-    hops = engine.run_chain(start, shift, req.hops)
-    return {"hops": hops}
+    def respond_greeting(self, match):
+        return random.choice(["Hello! How can I help?", "Hi! Tell me something about yourself.", "Greetings! I remember exactly."])
 
-@app.get("/")
-def root():
-    return {"name": "Recallspection API", "status": "online", "version": "v12"}
+    def remember_name(self, match):
+        name = match.group(1)
+        self.memory.add("user_name", name)
+        return f"Nice to meet you, {name}! I'll remember that."
+
+    def remember_preference(self, match):
+        pref = match.group(1)
+        self.memory.add("user_preference", pref)
+        return f"Okay, I'll remember that you like {pref}."
+
+    def remember_favorite(self, match):
+        category, item = match.group(1), match.group(2)
+        self.memory.add(f"favorite_{category.strip()}", item)
+        return f"Got it! Your favorite {category} is {item}."
+
+    def ask_name(self, match):
+        name = self.memory.get("user_name")
+        return f"Your name is {name}." if name else "I don't know your name yet."
+
+    def ask_preference(self, match):
+        pref = self.memory.get("user_preference")
+        return f"You told me you like {pref}." if pref else "You haven't told me what you like yet."
+
+    def ask_favorite(self, match):
+        category = match.group(1).strip()
+        item = self.memory.get(f"favorite_{category}")
+        return f"Your favorite {category} is {item}." if item else f"You haven't told me your favorite {category} yet."
+
+    def ask_time(self, match):
+        return f"The current time is {time.strftime('%H:%M:%S')}."
+
+    def ask_memory_count(self, match):
+        return f"I have stored {self.memory.stats()['stored']} facts."
+
+    def ask_all_memories(self, match):
+        keys = list(self.memory._storage.keys())
+        if not keys:
+            return "My memory is empty."
+        return f"I remember: {', '.join(keys[:5])}" + (f" ... and {len(keys)-5} more." if len(keys) > 5 else "")
+
+    def fallback(self, match):
+        return random.choice([
+            "I'm not sure I understand. Tell me your name, or what you like.",
+            "Try saying: 'My name is ...' or 'I like ...'"
+        ])
+
+    def process(self, user_input: str) -> Optional[str]:
+        user_input = user_input.strip().lower()
+        for pattern, handler in self.rules:
+            match = re.match(pattern, user_input)
+            if match and handler:
+                return handler(match)
+        return self.fallback(None)
+
+# -----------------------------------------------------------------------------
+# 3. FASTAPI APPLICATION
+# -----------------------------------------------------------------------------
+app = FastAPI(title="Recallspection API", version="17.0.0")
+
+# Global memory instance
+memory = None
+mind = None
+
+# Request/Response models
+class ChatRequest(BaseModel):
+    message: str
+
+class ChatResponse(BaseModel):
+    response: str
+
+# -----------------------------------------------------------------------------
+# 4. LIFECYCLE EVENTS (Load/Save)
+# -----------------------------------------------------------------------------
+@app.on_event("startup")
+def startup_event():
+    global memory, mind
+    memory = ExactMemory()
+    if os.path.exists("memory.db"):
+        memory.load("memory.db")
+        print("✓ Loaded existing memory.")
+    else:
+        print("✓ No existing memory found. Starting fresh.")
+    mind = StdlibMind(memory)
+
+@app.on_event("shutdown")
+def shutdown_event():
+    if memory:
+        memory.save("memory.db")
+        print("✓ Memory saved.")
+
+# -----------------------------------------------------------------------------
+# 5. ENDPOINTS
+# -----------------------------------------------------------------------------
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Serve the web interface."""
+    return HTML_PAGE
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """Process a chat message."""
+    global memory, mind
+    if not mind:
+        raise HTTPException(503, "Memory not initialized.")
+    
+    user_input = request.message.strip()
+    if not user_input:
+        return ChatResponse(response="Please say something.")
+    
+    # Special commands
+    if user_input.lower() == "/forget":
+        memory.clear()
+        memory.save("memory.db")
+        return ChatResponse(response="Memory cleared.")
+    
+    if user_input.lower() == "/exit":
+        return ChatResponse(response="Goodbye! Remembering everything.")
+    
+    # Process via Mind
+    response = mind.process(user_input)
+    if response:
+        # Store turn in memory
+        turn = {"user": user_input, "agent": response, "timestamp": time.time()}
+        memory.add(f"turn_{int(time.time())}", turn)
+        memory.save("memory.db")
+        return ChatResponse(response=response)
+    else:
+        return ChatResponse(response="I didn't understand that.")
+
+@app.get("/history")
+async def history():
+    """Get all stored memories as JSON."""
+    if not memory:
+        raise HTTPException(503, "Memory not initialized.")
+    data = {}
+    for k, v in memory._storage.items():
+        try:
+            v_bytes = zlib.decompress(v)
+            data[k] = json.loads(v_bytes.decode())
+        except:
+            data[k] = "[binary data]"
+    return JSONResponse(data)
+
+@app.get("/stats")
+async def stats():
+    """Get memory statistics."""
+    if not memory:
+        raise HTTPException(503, "Memory not initialized.")
+    return JSONResponse(memory.stats())
+
+@app.post("/forget")
+async def forget():
+    """Clear all memory."""
+    if not memory:
+        raise HTTPException(503, "Memory not initialized.")
+    memory.clear()
+    memory.save("memory.db")
+    return JSONResponse({"status": "Memory cleared."})
+
+# -----------------------------------------------------------------------------
+# 6. HTML PAGE (Embedded)
+# -----------------------------------------------------------------------------
+HTML_PAGE = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Recallspection — Local AI Memory</title>
+    <style>
+        body {
+            background: #0a0a1a;
+            color: #e0e0ff;
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #333366;
+            padding: 20px;
+            border-radius: 8px;
+            background: #12122a;
+            margin-bottom: 20px;
+        }
+        #chat div {
+            margin: 6px 0;
+            padding: 8px 12px;
+            border-radius: 6px;
+        }
+        .user { color: #88ddff; text-align: right; }
+        .agent { color: #ddff88; text-align: left; }
+        #input-area {
+            display: flex;
+            gap: 10px;
+        }
+        #input-area input {
+            flex: 1;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #333366;
+            background: #1a1a33;
+            color: #fff;
+            font-size: 16px;
+        }
+        #input-area button {
+            padding: 12px 24px;
+            border-radius: 6px;
+            border: none;
+            background: #4466ff;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        #input-area button:hover {
+            background: #6688ff;
+        }
+        .status {
+            color: #8888aa;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        .timestamp {
+            color: #555577;
+            font-size: 11px;
+            margin: 0 0 0 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="status">🧠 RECALLSPECTION — Offline. Exact. Tamper‑Evident.</div>
+    <div id="chat"></div>
+    <div id="input-area">
+        <input id="msg" type="text" placeholder="Type your message..." autofocus>
+        <button id="send">Send</button>
+    </div>
+    <script>
+        const chat = document.getElementById('chat');
+        const msg = document.getElementById('msg');
+        const sendBtn = document.getElementById('send');
+
+        function addMessage(text, type) {
+            const div = document.createElement('div');
+            div.className = type;
+            const ts = new Date().toLocaleTimeString();
+            div.innerHTML = text + ' <span class="timestamp">' + ts + '</span>';
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        async function sendMessage() {
+            const text = msg.value.trim();
+            if (!text) return;
+            addMessage(text, 'user');
+            msg.value = '';
+
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                addMessage(data.response, 'agent');
+            } catch (e) {
+                addMessage('Error: ' + e.message, 'agent');
+            }
+        }
+
+        msg.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+        sendBtn.addEventListener('click', sendMessage);
+
+        // Initial greeting
+        addMessage("Hello! I'm an exact memory agent. Tell me something about yourself.", 'agent');
+        msg.focus();
+    </script>
+</body>
+</html>
+"""
+
+# -----------------------------------------------------------------------------
+# 7. RUN (for local testing)
+# -----------------------------------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
