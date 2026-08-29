@@ -1,19 +1,16 @@
 """
-Recallspection — Exact + Semantic Memory for AI Agents
-
-This package provides:
-- `ExactMemory`: A cryptographic, stdlib-only, exact key-value store.
-- `CompleteObserver`: A semantic memory layer (FAISS + quorum consensus).
+Recallspection – Dual‑core exact memory for AI agents.
 """
 
-from .observer import CompleteObserver
-from .exact import ExactMemory, ExactConfig
-
-__version__ = "17.0.0"
-__author__ = "Sciencedelic Metatech"
+from .exact import ExactMemory
+from .swstm import SWSTMEngine, FlatSWSTM, HierarchicalSWSTM, PQSWSTM
 
 __all__ = [
-    "CompleteObserver",
     "ExactMemory",
-    "ExactConfig",
+    "SWSTMEngine",
+    "FlatSWSTM",
+    "HierarchicalSWSTM",
+    "PQSWSTM",
 ]
+
+__version__ = "18.0.0"
