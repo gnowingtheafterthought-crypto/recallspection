@@ -1,13 +1,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="recallspection",
+    name="Recallspection",
     version="18.0.0",
     description="Dual‑core exact memory for AI agents (ExactMemory + SWSTM)",
     author="Sciencedelic Metatech",
-    author_email="eli.am@recallspection.com",
+    author_email="eliamraell@yandex.com",
     url="https://github.com/sciencedelicmetatech/recallspection",
-    packages=find_packages(),
+    packages=find_packages(include=["recallspection", "recallspection.*"]),
+    include_package_data=True,
     install_requires=[
         "fastapi",
         "uvicorn",
