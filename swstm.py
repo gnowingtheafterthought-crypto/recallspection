@@ -215,6 +215,129 @@ class HierarchicalSWSTM(nn.Module):
 
 
 # -----------------------------------------------------------------------------
+# Product Quantization (PQ) for Million-Scale
+# -----------------------------------------------------------------------------
+
+class PQEncoder:
+    """
+    Product Quantization encoder.
+    Splits vectors into M subvectors, each quantized with K centroids.
+    Memory: N * M bytes (if K=256, M=24 => 24 bytes per vector).
+    """
+    def __init__(self, dim: int, num_subvectors: int = 24, num_centroids: int = 256):
+        self.dim = dim
+        self.num_subvectors = num_subvectors
+        self.num_centroids = num_centroids
+        assert dim % num_subvectors == 0
+        self.sub_dim = dim // num_subvectors
+        self.codebooks = None  # (M, K, sub_dim)
+
+    def fit(self, vectors: torch.Tensor):
+        """Fit codebooks using K-Means on subvectors."""
+        from sklearn.cluster import KMeans
+        vectors = vectors.reshape(-1, self.num_subvectors, self.sub_dim)
+        codebooks = []
+        for m in range(self.num_subvectors):
+            subvecs = vectors[:, m, :].numpy()
+            kmeans = KMeans(n_clusters=self.num_centroids, random_state=0, n_init=10)
+            kmeans.fit(subvecs)
+            codebooks.append(torch.tensor(kmeans.cluster_centers_, dtype=torch.float32))
+        self.codebooks = torch.stack(codebooks, dim=0)  # (M, K, Dm)
+
+    def encode(self, vectors: torch.Tensor) -> torch.Tensor:
+        """Encode to indices (N, M)."""
+        vectors = vectors.reshape(-1, self.num_subvectors, self.sub_dim)
+        codes = []
+        for m in range(self.num_subvectors):
+            # (N, Dm) vs (K, Dm) -> distances
+            dists = torch.cdist(vectors[:, m, :], self.codebooks[m])
+            idx = torch.argmin(dists, dim=-1)  # (N,)
+            codes.append(idx)
+        return torch.stack(codes, dim=-1)  # (N, M)
+
+    def decode(self, codes: torch.Tensor) -> torch.Tensor:
+        """Decode indices to vectors (N, dim)."""
+        vectors = []
+        for m in range(self.num_subvectors):
+            centroids = self.codebooks[m][codes[:, m]]  # (N, Dm)
+            vectors.append(centroids)
+        return torch.cat(vectors, dim=-1)
+
+
+class PQSWSTM:
+    """
+    Million‑fact SWSTM with Product Quantization.
+    Router centroids (coarse) + PQ‑compressed keys (fine).
+    """
+    def __init__(
+        self,
+        num_clusters: int = 1000,
+        facts_per_cluster: int = 1000,
+        dim: int = 384,
+        num_subvectors: int = 24,
+    ):
+        self.num_clusters = num_clusters
+        self.facts_per_cluster = facts_per_cluster
+        self.dim = dim
+        self.num_subvectors = num_subvectors
+
+        self.router_centroids = None  # (num_clusters, dim)
+        self.pq_encoder = PQEncoder(dim, num_subvectors)
+        self.compressed_keys = None   # (total_facts, num_subvectors) uint8
+        self.value_map = {}           # global index -> value string
+        self.fact_count = 0
+
+    def fit(self, all_keys: torch.Tensor, all_values: List[str]):
+        """Fit router centroids, PQ codebooks, and compress keys."""
+        # 1. K-Means on all keys for router
+        from sklearn.cluster import KMeans
+        kmeans = KMeans(n_clusters=self.num_clusters, random_state=0, n_init=10)
+        kmeans.fit(all_keys.numpy())
+        self.router_centroids = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)
+
+        # 2. Fit PQ codebooks on all keys
+        self.pq_encoder.fit(all_keys)
+
+        # 3. Encode all keys
+        codes = self.pq_encoder.encode(all_keys)  # (N, M)
+        self.compressed_keys = codes.to(torch.uint8)
+
+        # 4. Store value map
+        self.value_map = {i: v for i, v in enumerate(all_values)}
+        self.fact_count = len(all_values)
+
+    def retrieve(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
+        """Return top‑k value strings for a query."""
+        if self.router_centroids is None or self.compressed_keys is None:
+            return []
+
+        # Coarse search: find nearest cluster centroid
+        norm_q = F.normalize(query_vec.unsqueeze(0), dim=-1)
+        norm_router = F.normalize(self.router_centroids, dim=-1)
+        sims = torch.mm(norm_q, norm_router.T)
+        cluster_id = torch.argmax(sims, dim=-1).item()
+
+        # Fine search: decode PQ codes of that cluster
+        start = cluster_id * self.facts_per_cluster
+        end = min(start + self.facts_per_cluster, self.compressed_keys.size(0))
+        codes = self.compressed_keys[start:end].long()
+        decoded = self.pq_encoder.decode(codes)  # (num_in_cluster, dim)
+
+        # Compute similarity to query
+        norm_decoded = F.normalize(decoded, dim=-1)
+        sims = torch.mm(norm_q, norm_decoded.T)  # (1, num_in_cluster)
+        top_scores, top_indices = torch.topk(sims, min(top_k, sims.size(1)), dim=-1)
+
+        # Map to values
+        results = []
+        for idx in top_indices.squeeze(0).tolist():
+            global_idx = start + idx
+            if global_idx in self.value_map:
+                results.append(self.value_map[global_idx])
+        return results
+
+
+# -----------------------------------------------------------------------------
 # Unified Engine (drop‑in replacement for ExactMemory)
 # -----------------------------------------------------------------------------
 
@@ -230,6 +353,9 @@ class SWSTMEngine:
         flat_num_slots: int = 200,
         hierarchical_num_clusters: int = 50,
         hierarchical_slots_per_expert: int = 2000,
+        pq_num_clusters: int = 1000,
+        pq_facts_per_cluster: int = 1000,
+        pq_num_subvectors: int = 24,
         key_dim: int = 384,
         temperature: float = 0.01,
         margin: float = 0.2,
@@ -241,6 +367,9 @@ class SWSTMEngine:
         self.flat_num_slots = flat_num_slots
         self.hierarchical_num_clusters = hierarchical_num_clusters
         self.hierarchical_slots_per_expert = hierarchical_slots_per_expert
+        self.pq_num_clusters = pq_num_clusters
+        self.pq_facts_per_cluster = pq_facts_per_cluster
+        self.pq_num_subvectors = pq_num_subvectors
         self.key_dim = key_dim
         self.temperature = temperature
         self.margin = margin
@@ -250,8 +379,8 @@ class SWSTMEngine:
         self.memory = None
         self.fact_count = 0
         self.encoder = SentenceTransformer(encoder_model)
-        self.pending_keys = []      # for batch router fitting
-        self.pending_values = []    # for batch router fitting
+        self.pending_keys = []      # for batch router / PQ fitting
+        self.pending_values = []    # for batch router / PQ fitting
 
     def _initialize(self, num_facts: int):
         if self.mode == "flat" or (self.mode == "auto" and num_facts <= self.auto_threshold_flat):
@@ -278,22 +407,33 @@ class SWSTMEngine:
                   f"{self.hierarchical_slots_per_expert} slots each.")
 
         else:
-            # PQ mode – we'll implement later (v18.1)
-            raise NotImplementedError("PQ mode not yet implemented in this version.")
+            # PQ mode
+            self.memory = PQSWSTM(
+                num_clusters=self.pq_num_clusters,
+                facts_per_cluster=self.pq_facts_per_cluster,
+                dim=self.key_dim,
+                num_subvectors=self.pq_num_subvectors,
+            )
+            print(f"[SWSTM] PQ mode: {self.pq_num_clusters} clusters, "
+                  f"{self.pq_facts_per_cluster} facts each.")
 
     def _prepare_batch(self):
-        """If pending facts exist, fit router and add them all."""
+        """If pending facts exist, fit router (hierarchical) or PQ and add them."""
         if not self.pending_keys:
             return
         if isinstance(self.memory, HierarchicalSWSTM):
             all_keys = torch.stack(self.pending_keys)
             self.memory.fit_router(all_keys)
-            # Add all facts
             keys_batch = torch.stack(self.pending_keys)
-            vals_batch = keys_batch  # we use key embedding as value
+            vals_batch = keys_batch
             self.memory.add(keys_batch, vals_batch, self.pending_values)
             self.pending_keys.clear()
             self.pending_values.clear()
+        elif isinstance(self.memory, PQSWSTM):
+            # For PQ, we need all keys and values at once.
+            # We'll collect until we call fit_pq() explicitly or auto-threshold.
+            # We do nothing here; we wait for fit_pq() call.
+            pass
 
     def add(self, key: Union[str, dict, bytes, torch.Tensor], value: str) -> str:
         """Add a fact. Returns confirmation string."""
@@ -312,14 +452,14 @@ class SWSTMEngine:
         if self.memory is None:
             self._initialize(1)
 
-        # If hierarchical, we need to collect facts before fitting router.
-        if isinstance(self.memory, HierarchicalSWSTM):
+        # Store pending for hierarchical or PQ
+        if isinstance(self.memory, (HierarchicalSWSTM, PQSWSTM)):
             self.pending_keys.append(vec)
             self.pending_values.append(value)
-            # If we've collected enough, we could auto‑fit, but we leave it to the user.
-            # For simplicity, we fit when we hit 100 facts or on explicit call.
-            if len(self.pending_keys) >= 100:
+            # Auto‑fit for hierarchical when we have enough (e.g., 100 facts)
+            if isinstance(self.memory, HierarchicalSWSTM) and len(self.pending_keys) >= 100:
                 self._prepare_batch()
+            # For PQ, we do not auto‑fit; user must call fit_pq()
         else:
             # Flat: add immediately
             self.memory.add(vec, value)
@@ -332,7 +472,7 @@ class SWSTMEngine:
         if self.memory is None:
             return []
 
-        # Flush pending facts before reading
+        # Flush pending facts before reading (for hierarchical)
         self._prepare_batch()
 
         if isinstance(key, str):
@@ -346,15 +486,33 @@ class SWSTMEngine:
             return self.memory.get(vec, top_k=top_k)
         elif isinstance(self.memory, HierarchicalSWSTM):
             return self.memory.get(vec, top_k=top_k)
+        elif isinstance(self.memory, PQSWSTM):
+            return self.memory.retrieve(vec, top_k=top_k)
         else:
             return []
+
+    def fit_pq(self):
+        """For PQ mode: fit router centroids, PQ codebooks, and compress keys."""
+        if isinstance(self.memory, PQSWSTM) and self.pending_keys:
+            all_keys = torch.stack(self.pending_keys)
+            all_values = self.pending_values
+            self.memory.fit(all_keys, all_values)
+            self.pending_keys.clear()
+            self.pending_values.clear()
+            print(f"[SWSTM] PQ fitted with {self.memory.fact_count} facts.")
+        else:
+            print("fit_pq() only needed for PQ mode and when there are pending facts.")
+
+    def fit_router(self):
+        """Explicitly fit router for hierarchical mode (flush pending)."""
+        if isinstance(self.memory, HierarchicalSWSTM):
+            self._prepare_batch()
+        else:
+            print("fit_router() only needed for hierarchical mode.")
 
     def train(self, epochs: int = 100, lr: float = 0.001):
         """Train the underlying flat memory (if applicable)."""
         if isinstance(self.memory, FlatSWSTM):
-            # We need all keys and values that were added. For simplicity, we
-            # assume the user will call this after adding facts.
-            # This would require storing training data; we skip for now.
             warnings.warn("Training not fully implemented in Engine; use FlatSWSTM directly.")
         else:
             print("Training only supported for flat SWSTM.")
@@ -368,9 +526,11 @@ class SWSTMEngine:
                 correct += 1
         return correct / len(test_keys) if test_keys else 0.0
 
-    def fit_router(self):
-        """Explicitly fit router for hierarchical mode (flush pending)."""
-        if isinstance(self.memory, HierarchicalSWSTM):
-            self._prepare_batch()
-        else:
-            print("fit_router() only needed for hierarchical mode.")
+
+__all__ = [
+    "FlatSWSTM",
+    "HierarchicalSWSTM",
+    "PQEncoder",
+    "PQSWSTM",
+    "SWSTMEngine",
+]
