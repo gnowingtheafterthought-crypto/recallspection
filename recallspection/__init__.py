@@ -1,16 +1,35 @@
 """
 Recallspection – Dual‑core exact memory for AI agents.
+
+ExactMemory (cryptographic hash table) and SWSTM (neural memory) in one package.
 """
 
-from .exact import ExactMemory
-from .swstm import SWSTMEngine, FlatSWSTM, HierarchicalSWSTM, PQSWSTM
+# Version
+__version__ = "18.0.0"
 
+# ExactMemory core
+from .exact import ExactMemory
+
+# SWSTM core (all backends + engine)
+from .swstm import (
+    FlatSWSTM,
+    HierarchicalSWSTM,
+    PQEncoder,
+    PQSWSTM,
+    SWSTMEngine,
+)
+
+# Public API
 __all__ = [
+    # ExactMemory
     "ExactMemory",
-    "SWSTMEngine",
+    # SWSTM
     "FlatSWSTM",
     "HierarchicalSWSTM",
+    "PQEncoder",
     "PQSWSTM",
+    "SWSTMEngine",
 ]
 
-__version__ = "18.0.0"
+# Convenience: if someone imports from recallspection directly,
+# they get the most commonly used classes.
