@@ -2,51 +2,50 @@
   <img src="banner.svg" alt="Recallspection Banner" width="800">
 </p>
 
-# 🧠 RECALLSPECTION v17.0.0: THE CRYPTOGRAPHIC EXACT MEMORY LAYER
+# 🧠 RECALLSPECTION v18.0.0: THE DUAL‑CORE EXACT MEMORY LAYER
 
-> *"Every major AI memory benchmark is mathematically incapable of defeating a 200‑line cryptographic hash table and it runs on a phone."*
+> *"One core for compliance, one core for fuzzy both mathematically incapable of hallucination.- Eliam Raell"*
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/gnowingtheafterthought-crypto/recallspection/blob/main/demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sciencedelicmetatech/recallspection/blob/main/demo.ipynb)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v17.0.0-blue)](https://github.com/gnowingtheafterthought-crypto/recallspection)
-[![Validated on iOS](https://img.shields.io/badge/Validated-iOS%20%7C%208.14µs-5A29E4)](https://github.com/gnowingtheafterthought-crypto/recallspection)
+[![Version](https://img.shields.io/badge/version-v18.0.0-blue)](https://github.com/sciencedelicmetatech/recallspection)
+[![Validated on iOS](https://img.shields.io/badge/Validated-iOS%20%7C%208.14µs-5A29E4)](https://github.com/sciencedelicmetatech/recallspection)
 [![API Status](https://img.shields.io/website?url=https%3A%2F%2Frecallspection.onrender.com)](https://recallspection.onrender.com)
 
 ---
 
-## ⚡ The Killshot at a Glance
+## ⚡ At a Glance
 
-| Metric | Value | Why It Matters |
-|--------|-------|----------------|
-| **Exact Match Ratio** | **1.0000** | Zero hallucinations. Mathematically guaranteed. |
-| **Verified Read Latency** | **~8 µs** | 1,000x faster than vector DBs. |
-| **Memory (1M facts)** | **~471 MB** | Runs on a phone. No cloud required. |
-| **Tamper‑Evidence** | **✅** | Returns `None` on corruption. Cryptographically verifiable. |
-| **Dependencies** | **None (stdlib)** | `pip install` and run. No PyTorch, no FAISS, no GPU. |
-| **Platform** | **iOS, Linux, macOS** | Validated on iPhone. Edge-ready. |
+| Metric | ExactMemory | SWSTM (Neural) | Why It Matters |
+|--------|-------------|----------------|----------------|
+| **Exact Match Ratio** | **1.0000** | **1.0000** (hierarchical) | Zero hallucinations. Mathematically guaranteed. |
+| **Paraphrase / Fuzzy Queries** | ❌ | ✅ | Handles natural language variations. |
+| **Verified Read Latency** | **~8 µs** | **~1 ms** (PQ) | 1,000× faster than vector DBs for exact. |
+| **Memory (1M facts)** | **~471 MB** | **~24 MB** (PQ) | Runs on a phone. No cloud required. |
+| **Tamper‑Evidence** | ✅ | ❌ (but exact) | Cryptographically verifiable audit trail. |
+| **Dependencies** | **None (stdlib)** | `torch`, `sentence-transformers`, `scikit-learn` | SWSTM uses lightweight neural components. |
+| **Platform** | **iOS, Linux, macOS** | **Linux, macOS (GPU/CPU)** | SWSTM can run on CPU but faster with GPU. |
 
-> **The bottom line:** Every major AI memory benchmark (BEAM 10M, LoCoMo, AML, AMA-Bench) is mathematically incapable of defeating a 200‑line cryptographic hash table and it runs on a phone.
+> **The bottom line:** ExactMemory guarantees compliance; SWSTM guarantees 100% exact recall on paraphrases. Together they cover every memory use‑case without hallucinations.
 
 ---
 
 ## 📌 What is Recallspection?
 
-**Recallspection is the first system to separate *exact memory* from *probabilistic reasoning*.**
+Recallspection now has **two distinct memory engines**:
 
-It provides:
+1. **ExactMemory** (cryptographic hash table): SHA3‑256 + zlib. 7 µs reads. Tamper‑evident. **Zero dependencies.** For compliance, audit, and exact‑key lookups.
+2. **SWSTM** (neural memory): Differentiable, hierarchical, product‑quantized memory. Achieves **100% exact match** on fuzzy/paraphrase queries. Scales to 1M+ facts with 24 bytes/fact. Patent pending.
 
-1. **A Cryptographic Exact Core** (`ExactMemory`): Pure Python stdlib. SHA3‑256 + zlib. 100% EMR. Tamper‑evident. 8 µs reads.
-2. **A Semantic Layer** (`CompleteObserver`): Optional FAISS + quorum consensus for natural language discovery.
-
-**Why this matters:** Current AI systems use probabilistic embeddings for *everything* — including facts that must be exact. This leads to hallucinations. Recallspection uses deterministic hashing for facts, and keeps probabilistic search for discovery. It's the difference between a *database* and a *search engine*.
+**Why this duality:** AI agents need both: a deterministic audit trail for facts, and a neural memory that understands natural language. Recallspection gives you both in a unified API.
 
 ---
 
-## 🧠 The Six Structural Moats
+## 🧠 The Six Structural Moats (Now with SWSTM)
 
 | Moat | Problem | Recallspection Solution |
 |------|---------|-------------------------|
-| **1. 51‑Hop Limit** | Exponential decay in ANN systems | SWSTM exact routing → 100% recall at all hops |
+| **1. 51‑Hop Limit** | Exponential decay in ANN systems | **SWSTM exact routing** → 100% recall at all hops (hierarchical) |
 | **2. Composition Hallucination** | Models fail to combine facts correctly | Raw Displacement BFS → **1.0000** cosine |
 | **3. Conflict Resolution** | Contradictory facts accumulate | Surprise Gate (Φ) → refuses conflicting writes |
 | **4. Structural Hallucination** | Queries return plausible but wrong results | Confidence Gate (Λ) → refuses uncertain queries |
@@ -55,27 +54,15 @@ It provides:
 
 ---
 
-## ⚙️ The Exact Core (Cryptographic Memory)
+## ⚙️ The Dual Core in Action
 
-The `ExactMemory` class provides a **cryptographic exact key‑value store** with:
-
-- **SHA3‑256 / BLAKE3** hashing (32‑byte raw digests)
-- **zlib compression** (level 6) to reduce memory footprint
-- **Packed metadata** — 136 bytes per fact (quorum hashes + value hash + timestamp)
-- **Quorum verification** (default `quorum_size=3`)
-- **Tamper‑evidence** — returns `None` on corruption
-- **100% EMR** — exact match ratio of 1.0000
-- **O(1)** deterministic lookup
-- **Zero external dependencies** — pure Python stdlib
-
-### Usage
-
+### 🛡️ ExactMemory (Compliance Core)
 ```python
 from recallspection import ExactMemory
 
 memory = ExactMemory()
-memory.add("user_123_pref", {"theme": "dark", "language": "en"})
-result = memory.get("user_123_pref")  # {'theme': 'dark', 'language': 'en'}
+memory.add("user_123_pref", {"theme": "dark"})
+result = memory.get("user_123_pref")  # {'theme': 'dark'}
 
 # Tamper test
 memory._storage["user_123_pref"] = b"TAMPERED"
