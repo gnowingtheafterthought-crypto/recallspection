@@ -192,6 +192,10 @@ app = FastAPI(
     version="18.0.0",
     lifespan=lifespan,
 )
+from fastapi.staticfiles import StaticFiles
+
+# Serve static files (like index.html) from the current directory
+app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 # -----------------------------------------------------------------------------
 # 7. API Key security with agent detection
