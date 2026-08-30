@@ -18,7 +18,8 @@
 - [ ] **Multi-tenancy** – Isolated memory spaces per user/organization
 - [ ] **Audit trail** – Cryptographic proof of *when* a fact was retrieved
 - [ ] **Federated memory** – Sync across multiple Recallspection nodes
-- [ ] **Web UI dashboard** – Visualize stored facts and query history
+- [ ] **Web UI dashboard** – Visualize st
+ored facts and query history
 
 ## 🔮 Future (Beyond v19)
 - [ ] **Zero-knowledge proofs** – Verify retrieval without revealing the fact
