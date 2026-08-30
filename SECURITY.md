@@ -15,7 +15,7 @@ Recallspection is a cryptographic memory system for AI agents. Security and data
 
 Please report vulnerabilities via email to:
 
-**eli@example.com** (replace with your actual email)
+**eliamraell@yandex.com** 
 
 ### What to include:
 - A clear description of the vulnerability
