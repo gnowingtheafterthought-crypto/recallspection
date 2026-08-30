@@ -2,14 +2,12 @@ import os
 import json
 import logging
 import sqlite3
-import hashlib
 import secrets
-import time
 from contextlib import asynccontextmanager
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.security import APIKeyHeader
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 
@@ -48,14 +46,12 @@ def init_db():
             is_active INTEGER DEFAULT 1
         )
     ''')
-    # Add an index for faster lookups
     conn.execute('CREATE INDEX IF NOT EXISTS idx_key_id ON api_keys(key_id)')
     conn.commit()
     conn.close()
 
 def create_api_key(owner: str, plan: str = "free") -> str:
-    """Generate a new API key and store it in DB."""
-    key = f"rk_{secrets.token_urlsafe(24)}"  # rk = recallspection key
+    key = f"rk_{secrets.token_urlsafe(24)}"
     limit_map = {
         "free": 1000,
         "pro": 100000,
@@ -90,7 +86,6 @@ def increment_usage(key: str) -> int:
         (key,)
     )
     conn.commit()
-    # Get updated usage
     row = conn.execute("SELECT usage, limit FROM api_keys WHERE key_id = ?", (key,)).fetchone()
     conn.close()
     return row[0] if row else 0
@@ -129,7 +124,6 @@ def get_swstm():
 # 5. Persistent storage (load/save memory to JSON)
 # -----------------------------------------------------------------------------
 def save_memory():
-    """Save both ExactMemory and SWSTM to JSON."""
     data = {}
     try:
         if exact is not None:
@@ -173,16 +167,14 @@ def load_memory():
         logger.error(f"Failed to load memory: {e}")
 
 # -----------------------------------------------------------------------------
-# 6. FastAPI app with lifespan
+# 6. FastAPI app with lifespan and static file mount
 # -----------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: init DB + load memory
     init_db()
     load_memory()
     logger.info("Recallspection API started")
     yield
-    # Shutdown: save memory
     save_memory()
     logger.info("Recallspection API shutting down")
 
@@ -192,9 +184,8 @@ app = FastAPI(
     version="18.0.0",
     lifespan=lifespan,
 )
-from fastapi.staticfiles import StaticFiles
 
-# Serve static files (like index.html) from the current directory
+# --- Serve landing page (index.html) from root ---
 app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 # -----------------------------------------------------------------------------
@@ -203,7 +194,6 @@ app.mount("/", StaticFiles(directory=".", html=True), name="static")
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def is_agent_request(request: Request) -> bool:
-    """Detect if request is from an AI agent (vs human)."""
     user_agent = request.headers.get("user-agent", "").lower()
     agent_patterns = [
         "python", "curl", "wget", "requests", "langchain", "llamaindex",
@@ -213,7 +203,6 @@ def is_agent_request(request: Request) -> bool:
     for pattern in agent_patterns:
         if pattern in user_agent:
             return True
-    # Also check if request is from a known AI framework
     referer = request.headers.get("referer", "").lower()
     if "colab" in referer or "notebook" in referer:
         return True
@@ -222,26 +211,18 @@ def is_agent_request(request: Request) -> bool:
 async def validate_api_key(request: Request, api_key: str = Depends(api_key_header)):
     if api_key is None:
         raise HTTPException(status_code=401, detail="Missing API Key. Please provide X-API-Key header.")
-    
     key_info = get_key_info(api_key)
     if key_info is None:
         raise HTTPException(status_code=403, detail="Invalid API Key or key deactivated.")
-    
-    # Check usage limit
     remaining = get_remaining_usage(api_key)
     if remaining <= 0:
         raise HTTPException(
             status_code=402,
             detail=f"Usage limit exceeded. Plan: {key_info['plan']}, Used: {key_info['usage']}, Limit: {key_info['limit']}. Please upgrade."
         )
-    
-    # Increment usage
     increment_usage(api_key)
-    
-    # Attach key_info to request state for later use (e.g., logging)
     request.state.key_info = key_info
     request.state.is_agent = is_agent_request(request)
-    
     return key_info
 
 # -----------------------------------------------------------------------------
@@ -280,15 +261,6 @@ class UsageResponse(BaseModel):
 # -----------------------------------------------------------------------------
 # 9. Public endpoints (no auth required)
 # -----------------------------------------------------------------------------
-@app.get("/")
-async def root():
-    return {
-        "message": "Recallspection v18.0.0 is running",
-        "docs": "/docs",
-        "health": "/health",
-        "signup": "/signup (create an API key)",
-    }
-
 @app.get("/health")
 async def health():
     return {
@@ -301,16 +273,11 @@ async def health():
         "db_connected": os.path.exists(DB_FILE),
     }
 
-# -----------------------------------------------------------------------------
-# 10. Signup endpoint (create API key)
-# -----------------------------------------------------------------------------
 @app.post("/signup")
 async def signup(owner: str, plan: str = "free"):
-    """Create a new API key. Plans: free, pro, enterprise, agent_free, agent_pro, agent_enterprise."""
     valid_plans = ["free", "pro", "enterprise", "agent_free", "agent_pro", "agent_enterprise"]
     if plan not in valid_plans:
         raise HTTPException(status_code=400, detail=f"Invalid plan. Choose from: {valid_plans}")
-    
     key = create_api_key(owner, plan)
     key_info = get_key_info(key)
     return KeyResponse(
@@ -322,12 +289,11 @@ async def signup(owner: str, plan: str = "free"):
     )
 
 # -----------------------------------------------------------------------------
-# 11. Usage endpoint (check remaining quota)
+# 10. Protected endpoints (require API key)
 # -----------------------------------------------------------------------------
 @app.get("/usage")
-async def usage(api_key: str = Depends(validate_api_key)):
-    """Check your current usage and remaining quota."""
-    key_info = await api_key  # validate_api_key returns the key_info dict
+async def usage(api_key: dict = Depends(validate_api_key)):
+    key_info = await api_key
     return UsageResponse(
         owner=key_info["owner"],
         plan=key_info["plan"],
@@ -336,35 +302,6 @@ async def usage(api_key: str = Depends(validate_api_key)):
         remaining=key_info["limit"] - key_info["usage"],
     )
 
-# -----------------------------------------------------------------------------
-# 12. Admin endpoints (list/revoke keys)
-# -----------------------------------------------------------------------------
-@app.get("/admin/keys")
-async def list_keys(admin_key: str = Header(...)):
-    """List all API keys (admin only). Set RECALLSPECTION_ADMIN_KEY env var."""
-    ADMIN_KEY = os.getenv("RECALLSPECTION_ADMIN_KEY", "")
-    if admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
-    conn = get_db()
-    rows = conn.execute("SELECT key_id, owner, plan, usage, limit, created_at, last_used, is_active FROM api_keys").fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
-
-@app.post("/admin/revoke/{key_id}")
-async def revoke_key(key_id: str, admin_key: str = Header(...)):
-    """Revoke an API key (admin only)."""
-    ADMIN_KEY = os.getenv("RECALLSPECTION_ADMIN_KEY", "")
-    if admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin key")
-    conn = get_db()
-    conn.execute("UPDATE api_keys SET is_active = 0 WHERE key_id = ?", (key_id,))
-    conn.commit()
-    conn.close()
-    return {"status": "ok", "message": f"Key {key_id} revoked"}
-
-# -----------------------------------------------------------------------------
-# 13. Protected endpoints (require API key)
-# -----------------------------------------------------------------------------
 @app.post("/add", response_model=AddResponse)
 async def add_fact(
     request: Request,
@@ -372,7 +309,6 @@ async def add_fact(
     backend: str = "swstm",
     key_info: dict = Depends(validate_api_key),
 ):
-    """Add a fact. Backend: swstm (default) or exact."""
     try:
         if backend == "exact":
             mem = get_exact()
@@ -408,7 +344,6 @@ async def get_fact(
     backend: str = "swstm",
     key_info: dict = Depends(validate_api_key),
 ):
-    """Retrieve value(s) for a query."""
     try:
         if backend == "exact":
             mem = get_exact()
@@ -450,7 +385,6 @@ async def get_fact(
         logger.exception("Error in /get")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Exact endpoints (also protected)
 @app.post("/exact/add")
 async def add_exact(
     request: Request,
@@ -471,21 +405,12 @@ async def get_exact(
     mem = get_exact()
     result = mem.get(key)
     remaining = get_remaining_usage(key_info["key_id"])
-    return {
-        "answer": result,
-        "remaining": remaining,
-    } if result is not None else {
-        "answer": None,
-        "remaining": remaining,
-        "message": "Not found",
-    }
+    if result is not None:
+        return {"answer": result, "remaining": remaining}
+    return {"answer": None, "remaining": remaining, "message": "Not found"}
 
-# -----------------------------------------------------------------------------
-# 14. Agent-specific detection endpoint (returns plan suggestion)
-# -----------------------------------------------------------------------------
 @app.get("/agent-info")
 async def agent_info(request: Request, key_info: dict = Depends(validate_api_key)):
-    """Return info about the current request (agent vs human)."""
     is_agent = request.state.is_agent
     return {
         "is_agent": is_agent,
@@ -495,7 +420,31 @@ async def agent_info(request: Request, key_info: dict = Depends(validate_api_key
     }
 
 # -----------------------------------------------------------------------------
-# 15. Run
+# 11. Admin endpoints
+# -----------------------------------------------------------------------------
+@app.get("/admin/keys")
+async def list_keys(admin_key: str = Header(...)):
+    ADMIN_KEY = os.getenv("RECALLSPECTION_ADMIN_KEY", "")
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+    conn = get_db()
+    rows = conn.execute("SELECT key_id, owner, plan, usage, limit, created_at, last_used, is_active FROM api_keys").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+@app.post("/admin/revoke/{key_id}")
+async def revoke_key(key_id: str, admin_key: str = Header(...)):
+    ADMIN_KEY = os.getenv("RECALLSPECTION_ADMIN_KEY", "")
+    if admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+    conn = get_db()
+    conn.execute("UPDATE api_keys SET is_active = 0 WHERE key_id = ?", (key_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "message": f"Key {key_id} revoked"}
+
+# -----------------------------------------------------------------------------
+# 12. Run
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
