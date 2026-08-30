@@ -1,7 +1,8 @@
 import numpy as np
 
 class SWSTM:
-    """Sparse-Write Self-Token Memory for bit-perfect retrieval."""
+    """Sparse-Write Self-Token Memory for bit‑perfect retrieval."""
+    
     def __init__(self, dim: int, max_size: int = 10000):
         self.dim = dim
         self.max_size = max_size
@@ -14,3 +15,15 @@ class SWSTM:
         self.keys[idx] = key.flatten()
         self.values[idx] = value
         self.ptr += 1
+
+    def get(self, key: np.ndarray, top_k: int = 1):
+        """Retrieve the closest stored value(s) by L2 distance."""
+        key = key.flatten()
+        # Compute L2 distances
+        diff = self.keys[:self.ptr] - key
+        dist = np.linalg.norm(diff, axis=1)
+        # Get top_k closest indices
+        if len(dist) == 0:
+            return []
+        idxs = np.argsort(dist)[:top_k]
+        return [self.values[i] for i in idxs if self.values[i] is not None]
