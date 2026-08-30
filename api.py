@@ -8,6 +8,7 @@ from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse  # <-- NEW
 from pydantic import BaseModel
 import uvicorn
 
@@ -186,7 +187,17 @@ app = FastAPI(
 )
 
 # --- Serve landing page (index.html) from root ---
+# Static mount (fallback)
 app.mount("/", StaticFiles(directory=".", html=True), name="static")
+
+# --- Explicit root route to serve HTML (guaranteed to work) ---
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    try:
+        with open("index.html", "r") as f:
+            return f.read()
+    except FileNotFoundError:
+        return {"error": "index.html not found"}
 
 # -----------------------------------------------------------------------------
 # 7. API Key security with agent detection
@@ -449,4 +460,3 @@ async def revoke_key(key_id: str, admin_key: str = Header(...)):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-    
