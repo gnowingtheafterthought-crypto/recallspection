@@ -243,5 +243,3 @@ For patent and commercial inquiries, contact: eliamraell@yandex.com
 Made with ❤️ by Sciencedelic Metatech
 
 ```
-
----
