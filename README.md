@@ -2,7 +2,7 @@
   <img src="banner.svg" alt="Recallspection Banner" width="800">
 </p>
 
-# 🧠 RECALLSPECTION v18.0.0 – VERIFIABLE AI MEMORY
+# RECALLSPECTION v18.0.0 – VERIFIABLE AI MEMORY
 
 > *"We came to kill hallucination, but we found a better purpose: proving exactly what we said, to whom, and when."*
 
@@ -19,7 +19,7 @@
 Recallspection is a **cryptographic, verifiable memory layer** for AI systems that need to **prove exactly what they retrieved, to whom, and when**.
 
 It is **not** a general‑purpose AI memory, nor does it solve hallucination.  
-It **is** a tool for **RegTech, Compliance, and Legal AI** – where regulators demand proof that the AI quoted the exact source text, unaltered.
+It **is** a tool for **RegTech, Compliance, and Legal AI** where regulators demand proof that the AI quoted the exact source text, unaltered.
 
 ### What it does (and doesn't do)
 
