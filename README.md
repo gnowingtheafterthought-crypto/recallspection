@@ -3,7 +3,9 @@
 </p>
 
 # RECALLSPECTION v18.0.0 – VERIFIABLE AI MEMORY
-
+[![CI](https://github.com/sciencedelicmetatech/recallspection/actions/workflows/ci.yml/badge.svg)](https://github.com/sciencedelicmetatech/recallspection/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 > *"We came to kill hallucination, but we found a better purpose: proving exactly what we said, to whom, and when."*
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sciencedelicmetatech/recallspection/blob/main/demo.ipynb)
