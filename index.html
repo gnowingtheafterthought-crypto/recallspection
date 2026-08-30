@@ -4,22 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Recallspection – Exact Memory for AI</title>
-    
-    <!-- Google Font: Cinzel -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700;900&display=swap" rel="stylesheet" />
-    
     <style>
-        /* ---- Reset & Base ---- */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            background-color: #16161d; /* eigengrau */
+            background-color: #16161d;
             color: #b0b0c0;
             font-family: 'Cinzel', serif;
             min-height: 100vh;
@@ -31,8 +22,6 @@
             position: relative;
             overflow-x: hidden;
         }
-
-        /* ---- Subtle digital grid overlay ---- */
         body::before {
             content: '';
             position: fixed;
@@ -44,8 +33,6 @@
             pointer-events: none;
             z-index: 0;
         }
-
-        /* ---- Main container ---- */
         .container {
             position: relative;
             z-index: 1;
@@ -58,8 +45,6 @@
             justify-content: center;
             min-height: 70vh;
         }
-
-        /* ---- Logo / Headline ---- */
         .logo {
             font-family: 'Cinzel', serif;
             font-weight: 900;
@@ -80,8 +65,6 @@
                 0 0 30px rgba(255, 255, 255, 0.3),
                 0 0 60px rgba(255, 255, 255, 0.15);
         }
-
-        /* ---- Tagline ---- */
         .tagline {
             font-family: 'Cinzel', serif;
             font-weight: 400;
@@ -95,8 +78,6 @@
             padding-bottom: 1rem;
             display: inline-block;
         }
-
-        /* ---- Description ---- */
         .description {
             font-family: 'Cinzel', serif;
             font-weight: 400;
@@ -111,8 +92,6 @@
             color: #39ff14;
             font-weight: 700;
         }
-
-        /* ---- CTA Button ---- */
         .cta {
             font-family: 'Cinzel', serif;
             font-weight: 700;
@@ -150,8 +129,6 @@
             transform: scaleX(1);
             transform-origin: left;
         }
-
-        /* ---- Subtle status bar (bottom) ---- */
         .status {
             font-family: 'Cinzel', serif;
             font-weight: 400;
@@ -168,10 +145,7 @@
             justify-content: space-between;
             text-transform: uppercase;
         }
-        .status span {
-            color: #39ff14;
-            opacity: 0.6;
-        }
+        .status span { color: #39ff14; opacity: 0.6; }
         .status .dot {
             display: inline-block;
             width: 6px;
@@ -185,8 +159,6 @@
             0%, 100% { opacity: 0.2; }
             50% { opacity: 1; }
         }
-
-        /* ---- Responsive tweaks ---- */
         @media (max-width: 480px) {
             .container { padding: 1rem; }
             .logo { font-size: 3.2rem; }
@@ -198,25 +170,16 @@
 </head>
 <body>
     <div class="container">
-        <!-- Main Headline -->
         <h1 class="logo">Recallspection</h1>
-        
-        <!-- Tagline -->
         <div class="tagline">Exact Memory. Zero Hallucinations.</div>
-        
-        <!-- Description -->
         <p class="description">
             The first dual‑core memory for AI agents.<br />
             <strong>Cryptographic</strong> precision · <strong>Neural</strong> fuzziness ·
             <strong>100%</strong> exact recall.
         </p>
-        
-        <!-- Call to Action -->
         <a href="https://recallspection.onrender.com/docs" target="_blank" class="cta">
             Get Your API Key
         </a>
-        
-        <!-- Status Bar -->
         <div class="status">
             <span><span class="dot"></span> LIVE</span>
             <span>v18.0.0</span>
