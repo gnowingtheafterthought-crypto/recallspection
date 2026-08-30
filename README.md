@@ -1,3 +1,4 @@
+
 <p align="center">
   <img src="banner.svg" alt="Recallspection Banner" width="800">
 </p>
@@ -18,15 +19,15 @@
 
 ## ⚡ At a Glance
 
-| Feature | ExactMemory (Compliance) | SWSTM (Neural) |
-|---------|--------------------------|----------------|
-| **Exact Match Ratio** | 1.0000 | 1.0000 (hierarchical) |
-| **Paraphrase / Fuzzy Queries** | ❌ | ✅ |
-| **Verified Read Latency** | ~8 µs | ~1 ms (PQ) |
-| **Memory (1M facts)** | ~471 MB | ~24 MB (PQ) |
-| **Tamper‑Evidence** | ✅ SHA3‑256 + zlib | ❌ (but exact) |
-| **Dependencies** | None (stdlib) | torch, sentence‑transformers, scikit‑learn |
-| **Platform** | iOS, Linux, macOS | Linux, macOS (GPU/CPU) |
+| Feature                  | ExactMemory (Compliance) | SWSTM (Neural)           |
+|--------------------------|--------------------------|--------------------------|
+| **Exact Match Ratio**    | 1.0000                   | 1.0000 (hierarchical)    |
+| **Paraphrase / Fuzzy**   | ❌                       | ✅                       |
+| **Read Latency**         | ~8 µs                    | ~1 ms (PQ)               |
+| **Memory (1M facts)**    | ~471 MB                  | ~24 MB (PQ)              |
+| **Tamper‑Evidence**      | ✅ SHA3‑256 + zlib       | ❌ (but exact)           |
+| **Dependencies**         | None (stdlib)            | torch, transformers, sklearn |
+| **Platform**             | iOS, Linux, macOS        | Linux, macOS (GPU/CPU)   |
 
 ---
 
@@ -74,6 +75,7 @@
 ## 🛠️ Quickstart
 
 ### Installation
+
 ```bash
 pip install git+https://github.com/sciencedelicmetatech/recallspection.git
 ```
@@ -116,7 +118,7 @@ Then visit http://localhost:8000 to see the landing page, or http://localhost:80
 
 🌐 API Endpoints (Live)
 
-Endpoint Method Auth Required Description
+Endpoint Method Auth Description
 / GET ❌ Landing page
 /health GET ❌ Health check
 /signup POST ❌ Generate an API key
@@ -127,9 +129,11 @@ Endpoint Method Auth Required Description
 /exact/get GET ✅ Retrieve from ExactMemory only
 /agent-info GET ✅ Detect if request is from AI agent
 /admin/keys GET ✅ (admin) List all API keys
-/admin/revoke/{key_id} POST ✅ (admin) Revoke a key
+/admin/revoke/{id} POST ✅ (admin) Revoke an API key
 
 Authentication: All protected endpoints require the X-API-Key header.
+
+---
 
 Plans
 
@@ -140,6 +144,8 @@ Enterprise 1,000,000 1,000,000
 Agent Free 5,000 5,000
 Agent Pro 500,000 500,000
 Agent Enterprise 5,000,000 5,000,000
+
+---
 
 Create an API Key
 
@@ -167,11 +173,11 @@ curl "https://recallspection.onrender.com/get?key=France's%20capital" \
 
 📊 Benchmarks
 
-Mode Facts Accuracy Memory/Fact Training
-ExactMemory 10M 100% ~471 bytes None
-Flat SWSTM 1,000 ≥97% ~384 bytes Optional (STE)
-Hierarchical SWSTM 50,000 100% ~384 bytes None (K‑Means)
-PQ SWSTM 1,000,000 100% 24 bytes None (fit once)
+Mode Facts Accuracy Memory/Fact
+ExactMemory 10M 100% ~471 bytes
+Flat SWSTM 1,000 ≥97% ~384 bytes
+Hierarchical SWSTM 50,000 100% ~384 bytes
+PQ SWSTM 1,000,000 100% 24 bytes
 
 Measured on BABILong qa1 task (exact match).
 
@@ -202,7 +208,7 @@ Package Purpose
 fastapi Web framework for API
 uvicorn ASGI server
 sentence-transformers Text embeddings for SWSTM
-scikit-learn K‑Means clustering (hierarchical + PQ)
+scikit-learn K‑Means clustering (hierarchical)
 torch PyTorch for SWSTM neural memory
 numpy Numeric operations
 pydantic Data validation
