@@ -14,7 +14,7 @@
 
 ---
 
-## 🌒 The Honest Pitch
+## The Honest Glimpse
 
 Recallspection is a **cryptographic, verifiable memory layer** for AI systems that need to **prove exactly what they retrieved, to whom, and when**.
 
