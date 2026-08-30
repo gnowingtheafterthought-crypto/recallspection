@@ -2,68 +2,72 @@
   <img src="banner.svg" alt="Recallspection Banner" width="800">
 </p>
 
-# 🧠 RECALLSPECTION v18.0.0: THE DUAL‑CORE EXACT MEMORY LAYER
+# 🧠 RECALLSPECTION v18.0.0 – VERIFIABLE AI MEMORY
 
-> *"One core for compliance, one core for fuzzy both mathematically incapable of hallucination.- Eliam Raell"*
+> *"We came to kill hallucination, but we found a better purpose: proving exactly what we said, to whom, and when."*
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sciencedelicmetatech/recallspection/blob/main/demo.ipynb)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/version-v18.0.0-blue)](https://github.com/sciencedelicmetatech/recallspection)
-[![Validated on iOS](https://img.shields.io/badge/Validated-iOS%20%7C%208.14µs-5A29E4)](https://github.com/sciencedelicmetatech/recallspection)
+[![Validated on iOS](https://img.shields.io/badge/Validated-iOS%20%7C%200.4ms-5A29E4)](https://github.com/sciencedelicmetatech/recallspection)
 [![API Status](https://img.shields.io/website?url=https%3A%2F%2Frecallspection.onrender.com)](https://recallspection.onrender.com)
 
 ---
 
-## ⚡ At a Glance
+## 🌒 The Honest Pitch
 
-| Metric | ExactMemory | SWSTM (Neural) | Why It Matters |
-|--------|-------------|----------------|----------------|
-| **Exact Match Ratio** | **1.0000** | **1.0000** (hierarchical) | Zero hallucinations. Mathematically guaranteed. |
-| **Paraphrase / Fuzzy Queries** | ❌ | ✅ | Handles natural language variations. |
-| **Verified Read Latency** | **~8 µs** | **~1 ms** (PQ) | 1,000× faster than vector DBs for exact. |
-| **Memory (1M facts)** | **~471 MB** | **~24 MB** (PQ) | Runs on a phone. No cloud required. |
-| **Tamper‑Evidence** | ✅ | ❌ (but exact) | Cryptographically verifiable audit trail. |
-| **Dependencies** | **None (stdlib)** | `torch`, `sentence-transformers`, `scikit-learn` | SWSTM uses lightweight neural components. |
-| **Platform** | **iOS, Linux, macOS** | **Linux, macOS (GPU/CPU)** | SWSTM can run on CPU but faster with GPU. |
+Recallspection is a **cryptographic, verifiable memory layer** for AI systems that need to **prove exactly what they retrieved, to whom, and when**.
 
-> **The bottom line:** ExactMemory guarantees compliance; SWSTM guarantees 100% exact recall on paraphrases. Together they cover every memory use‑case without hallucinations.
+It is **not** a general‑purpose AI memory, nor does it solve hallucination.  
+It **is** a tool for **RegTech, Compliance, and Legal AI** – where regulators demand proof that the AI quoted the exact source text, unaltered.
 
----
+### What it does (and doesn't do)
 
-## 📌 What is Recallspection?
-
-Recallspection now has **two distinct memory engines**:
-
-1. **ExactMemory** (cryptographic hash table): SHA3‑256 + zlib. 7 µs reads. Tamper‑evident. **Zero dependencies.** For compliance, audit, and exact‑key lookups.
-2. **SWSTM** (neural memory): Differentiable, hierarchical, product‑quantized memory. Achieves **100% exact match** on fuzzy/paraphrase queries. Scales to 1M+ facts with 24 bytes/fact. Patent pending.
-
-**Why this duality:** AI agents need both: a deterministic audit trail for facts, and a neural memory that understands natural language. Recallspection gives you both in a unified API.
+| ✅ What it does | ❌ What it doesn't do |
+| :--- | :--- |
+| Cryptographically verify every retrieved fact (SHA3‑256 + timestamp). | Solve hallucination (that's a *generation* problem). |
+| Return the exact value for structured keys (`fact_3050` → `value_3050`) in **0.4 ms**. | Perform deep reasoning or logic (it's a memory store, not a brain). |
+| Handle paraphrases via a semantic fallback (FAISS + Sentence Transformers). | Achieve "24 bytes per fact" (Product Quantization is not yet implemented in the main branch). |
+| Run on edge devices (pure Python, zero external dependencies for the core). | Scale to millions of facts on CPU (use GPU for large‑scale semantic indexing). |
 
 ---
 
-## 🧠 The Six Structural Moats (Now with SWSTM)
+## 🧭 Architecture: Dual‑Core with Exact‑First Routing
 
-| Moat | Problem | Recallspection Solution |
-|------|---------|-------------------------|
-| **1. 51‑Hop Limit** | Exponential decay in ANN systems | **SWSTM exact routing** → 100% recall at all hops (hierarchical) |
-| **2. Composition Hallucination** | Models fail to combine facts correctly | Raw Displacement BFS → **1.0000** cosine |
-| **3. Conflict Resolution** | Contradictory facts accumulate | Surprise Gate (Φ) → refuses conflicting writes |
-| **4. Structural Hallucination** | Queries return plausible but wrong results | Confidence Gate (Λ) → refuses uncertain queries |
-| **5. State Management Collapse** | Memory lost on restart | MD5‑locked persistence → survives save/load |
-| **6. Error Amplification** | Multi‑agent systems compound errors | Bounded Drift Theorem → O(1) error growth |
+The system combines two memory engines with a strict routing logic:
+
+1. **ExactCore** – A cryptographic hash table (SHA3‑256 + zlib + dict).  
+   - **100% deterministic** – exact key → exact value.  
+   - **Tamper‑evident** – any corruption returns `None`.  
+   - **Latency**: ~0.4 ms on GPU, ~0.5 ms on CPU.
+
+2. **SemanticCore** – A standard RAG pipeline (Sentence Transformers + FAISS).  
+   - Handles paraphrases, typos, and natural‑language queries.  
+   - **Latency**: ~33 ms on GPU, ~60 ms on CPU.
+
+3. **Exact‑First Routing** – Before any semantic search, the system extracts structured keys (e.g., `fact_3050`, `doc_123`) and performs an exact lookup.  
+   - This fixes the **`3050` vs `305`** problem – a known failure mode of pure semantic search.
 
 ---
 
-## ⚙️ The Dual Core in Action
+## 📊 Performance Benchmarks (Empirical, GPU)
 
-### 🛡️ ExactMemory (Compliance Core)
-```python
-from recallspection import ExactMemory
+Run on Google Colab (T4 GPU, 10,000 facts):
 
-memory = ExactMemory()
-memory.add("user_123_pref", {"theme": "dark"})
-result = memory.get("user_123_pref")  # {'theme': 'dark'}
+| Operation | Latency | Accuracy |
+| :--- | :--- | :--- |
+| Write (10,000 facts) | **3.48 s** | 100% |
+| Exact Lookup (`fact_3050`) | **0.41 ms** | 100% |
+| Semantic Lookup (paraphrase) | **32.96 ms** | 100% (on test) |
+| Semantic Lookup without routing (`fact 3050`) | 0.13 ms* | **Fails** (returns `value_305`) |
 
-# Tamper test
-memory._storage["user_123_pref"] = b"TAMPERED"
-result = memory.get("user_123_pref")  # None — tampering detected!
+* *Routed to ExactCore via key extraction – bypasses semantic layer entirely.*
+
+**Reproducible**: Run the [Colab notebook](https://colab.research.google.com/github/sciencedelicmetatech/recallspection/blob/main/demo.ipynb) to verify.
+
+---
+
+## 🚀 Installation
+
+```bash
+pip install recallspection result = memory.get("user_123_pref")  # None — tampering detected!
