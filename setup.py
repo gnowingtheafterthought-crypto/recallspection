@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="Recallspection",
+    name="recallspection",
     version="18.0.0",
     description="Dual‑core exact memory for AI agents (ExactMemory + SWSTM)",
     author="Sciencedelic Metatech",
@@ -18,10 +18,17 @@ setup(
         "numpy",
         "pydantic",
     ],
-    python_requires=">=3.8",
+    extras_require={
+        "dev": [
+            "pytest",
+            "pytest-cov",
+            "ruff",
+        ],
+    },
+    python_requires=">=3.9",  # Changed from 3.8 to match CI matrix
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: Other/Proprietary License",
+        "License :: OSI Approved :: GNU Affero General Public License v3",  # FIXED
         "Operating System :: OS Independent",
     ],
 )
