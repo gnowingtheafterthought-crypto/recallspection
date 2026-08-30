@@ -23,7 +23,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e .[dev]
-    - name: Skip tests (temp) - fix import later
+        pip install pytest pytest-cov numpy
+    - name: Run tests
       run: |
-        echo "✅ Tests disabled temporarily – will fix swstm import soon."
-        exit 0
+        pytest tests/ -v
