@@ -19,10 +19,8 @@ class SWSTM:
     def get(self, key: np.ndarray, top_k: int = 1):
         """Retrieve the closest stored value(s) by L2 distance."""
         key = key.flatten()
-        # Compute L2 distances
         diff = self.keys[:self.ptr] - key
         dist = np.linalg.norm(diff, axis=1)
-        # Get top_k closest indices
         if len(dist) == 0:
             return []
         idxs = np.argsort(dist)[:top_k]
