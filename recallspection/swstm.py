@@ -98,6 +98,9 @@ class FlatSWSTM(nn.Module):
         val_vec = key_vec  # store key embedding as value
         idx = self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0)).item()
         self.value_map[idx] = value_str
+        # ★★★ Set self-token high to guarantee retrieval ★★★
+        with torch.no_grad():
+            self.self_token[idx] = 1.0
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
@@ -199,9 +202,12 @@ class HierarchicalSWSTM(nn.Module):
                 for i, slot_idx in enumerate(slot_indices.tolist()):
                     global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
-                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]  # <- missing ] fixed
+                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
+                    # ★★★ Set self-token for the expert's slot ★★★
+                    with torch.no_grad():
+                        self.experts[c].self_token[slot_idx] = 1.0
         self.fact_count += keys.size(0)
-        
+
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
         if self.router_centroids is None:
             return []
