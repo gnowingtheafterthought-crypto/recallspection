@@ -30,6 +30,7 @@ __all__ = [
     "HierarchicalSWSTM",            # alias for HierarchicalSwSTM (all caps)
     "ProductQuantizedSWSTM",
     "PQEncoder",                    # alias for ProductQuantizedSWSTM
+    "PQSWSTM",                      # alias for ProductQuantizedSWSTM
     "SWSTMEngine",
     "train_swstm",
     "KMeansRouter",
@@ -475,8 +476,9 @@ class ProductQuantizedSWSTM(nn.Module):
         }
 
 
-# Alias for backward compatibility
+# Aliases for backward compatibility
 PQEncoder = ProductQuantizedSWSTM
+PQSWSTM = ProductQuantizedSWSTM
 
 
 # ================================================================
