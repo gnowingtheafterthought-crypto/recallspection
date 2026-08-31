@@ -19,10 +19,6 @@ import warnings
 # -----------------------------------------------------------------------------
 
 class FlatSWSTM(nn.Module):
-    """
-    Flat memory with STE training, self-token, and margin loss.
-    """
-
     def __init__(
         self,
         num_slots: int,
@@ -40,36 +36,31 @@ class FlatSWSTM(nn.Module):
         self.margin = margin
         self.token_beta = token_beta
 
-        # Trainable parameters
         self.prototypes = nn.Parameter(torch.randn(num_slots, key_dim) * 0.02)
         self.self_token = nn.Parameter(torch.zeros(num_slots))
 
-        # Buffers (non‑trainable)
         self.register_buffer("memory", torch.zeros(num_slots, val_dim))
         self.register_buffer("used", torch.zeros(num_slots, dtype=torch.bool))
         self.register_buffer("slot_count", torch.zeros(num_slots, dtype=torch.long))
 
         self.fact_count = 0
-        self.value_map: Dict[int, str] = {}  # slot index → original string
+        self.value_map: Dict[int, str] = {}
 
     def forward(self, keys, values=None, op="write"):
-        # Ensure tensors are not in inference mode (clone if needed)
         if not keys.requires_grad:
             keys = keys.clone().detach().requires_grad_(True) if op == "write" else keys.clone()
         device = keys.device
         norm_keys = F.normalize(keys, dim=-1)
         norm_proto = F.normalize(self.prototypes, dim=-1)
-        # Move self_token to the same device as keys
         self_token = self.self_token.to(device)
         sims = torch.mm(norm_keys, norm_proto.T) + self_token.unsqueeze(0)
 
         soft_w = F.softmax(sims / self.temperature, dim=-1)
         hard_idx = torch.argmax(soft_w, dim=-1)
         one_hot = F.one_hot(hard_idx, num_classes=self.num_slots).float()
-        weights = one_hot.detach() + soft_w - soft_w.detach()  # STE
+        weights = one_hot.detach() + soft_w - soft_w.detach()
 
         if op == "write":
-            # values may also be inference tensors; clone them
             if values is not None and not values.requires_grad:
                 values = values.clone().detach().requires_grad_(True)
             delta = torch.einsum("bn,bd->nd", weights, values)
@@ -77,7 +68,6 @@ class FlatSWSTM(nn.Module):
             self.used[hard_idx] = True
             self.slot_count[hard_idx] += 1
 
-            # Update self‑token with max similarity (EMA)
             with torch.no_grad():
                 max_sim, _ = torch.max(sims, dim=-1)
                 for i, idx in enumerate(hard_idx):
@@ -87,15 +77,12 @@ class FlatSWSTM(nn.Module):
                     )
             self.fact_count += keys.size(0)
             return hard_idx
-        else:  # read
+        else:  # read (used during training only)
             return torch.mm(weights, self.memory)
 
     def add(self, key_vec: torch.Tensor, value_str: str) -> int:
-        """Add a single key‑value pair. Returns slot index."""
-        # Ensure key_vec is 1D; if it's a batch of 1, squeeze it.
         if key_vec.dim() == 2 and key_vec.size(0) == 1:
             key_vec = key_vec.squeeze(0)
-        # Ensure it has requires_grad for training (if needed)
         if not key_vec.requires_grad:
             key_vec = key_vec.clone().detach().requires_grad_(True)
         val_vec = key_vec
@@ -104,15 +91,14 @@ class FlatSWSTM(nn.Module):
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
-        """Retrieve top‑k values for a query."""
         if not query_vec.requires_grad:
             query_vec = query_vec.clone()
         device = query_vec.device
         norm_q = F.normalize(query_vec.unsqueeze(0), dim=-1)
-        norm_mem = F.normalize(self.memory, dim=-1)
-        # Include self‑token in similarity (same as during write)
+        # Compare to prototypes (not memory) – same as during write
+        norm_proto = F.normalize(self.prototypes.to(device), dim=-1)
         self_token = self.self_token.to(device)
-        sims = torch.mm(norm_q, norm_mem.T) + self_token.unsqueeze(0)
+        sims = torch.mm(norm_q, norm_proto.T) + self_token.unsqueeze(0)
         sims = sims.masked_fill(~self.used.unsqueeze(0), -1e9)
         top_scores, top_indices = torch.topk(sims, min(top_k, self.fact_count), dim=-1)
         results = []
@@ -189,7 +175,7 @@ class HierarchicalSWSTM(nn.Module):
         self.key_dim = key_dim
         self.val_dim = val_dim
 
-        self.register_buffer("router_centroids", None)  # set after fit_router()
+        self.register_buffer("router_centroids", None)
         self.experts = nn.ModuleList([
             FlatSWSTM(slots_per_expert, key_dim, val_dim, temperature, margin)
             for _ in range(num_clusters)
@@ -328,7 +314,7 @@ class PQSWSTM:
 
 
 # -----------------------------------------------------------------------------
-# Unified Engine (drop‑in replacement for ExactMemory)
+# Unified Engine
 # -----------------------------------------------------------------------------
 
 class SWSTMEngine:
@@ -434,7 +420,6 @@ class SWSTMEngine:
             if isinstance(self.memory, HierarchicalSWSTM) and len(self.pending_keys) >= 100:
                 self._prepare_batch()
         else:
-            # Flat: ensure vec is 1D
             if vec.dim() == 2 and vec.size(0) == 1:
                 vec = vec.squeeze(0)
             self.memory.add(vec, value)
