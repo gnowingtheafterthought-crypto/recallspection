@@ -5,7 +5,7 @@
 
 # 🧠 RECALLSPECTION v18.0.0: THE DUAL‑CORE EXACT MEMORY LAYER
 
-> *"One core for compliance, one core for fuzzy – both mathematically incapable of hallucination."*
+> *"One core for compliance, one core for fuzzy both mathematically incapable of hallucination."*
 
 [![GitHub](https://img.shields.io/badge/GitHub-sciencedelicmetatech%2Frecallspection-blue)](https://github.com/sciencedelicmetatech/recallspection)
 [![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
