@@ -21,12 +21,16 @@ import hashlib
 import time
 
 __version__ = "7.0"
+
+# Export all public classes
 __all__ = [
     "SWSTMExtraTrainable",
+    "FlatSWSTM",                    # alias for SWSTMExtraTrainable (for backward compatibility)
     "HierarchicalSwSTM",
     "ProductQuantizedSWSTM",
     "SWSTMEngine",
     "train_swstm",
+    "KMeansRouter",
 ]
 
 
@@ -152,6 +156,10 @@ class SWSTMExtraTrainable(nn.Module):
             "total_slots": self.num_slots,
             "usage_ratio": used_slots / self.num_slots,
         }
+
+
+# Alias for backward compatibility with the test suite / __init__.py
+FlatSWSTM = SWSTMExtraTrainable
 
 
 # ================================================================
