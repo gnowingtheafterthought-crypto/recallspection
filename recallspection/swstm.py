@@ -61,15 +61,19 @@ class FlatSWSTM(nn.Module):
         return weights, sims
 
     def write(self, keys, values):
-        """Write phase: no gradients. Returns hard indices."""
+        """Write phase: no gradients. Updates self‑token via EMA."""
         with torch.no_grad():
-            weights, _ = self._get_weights(keys, with_grad=False)
+            weights, sims = self._get_weights(keys, with_grad=False)
             delta = torch.einsum('bn,bd->nd', weights, values)
             self.memory = self.memory + delta
             hard_idx = torch.argmax(weights, dim=-1)
             self.used[hard_idx] = True
             self.slot_count[hard_idx] += 1
             self.fact_count += keys.size(0)
+            # EMA update for self‑token (unique per slot)
+            max_sim, _ = torch.max(sims, dim=-1)
+            for i, idx in enumerate(hard_idx):
+                self.self_token[idx] = self.token_beta * self.self_token[idx] + (1 - self.token_beta) * max_sim[i].item()
             return hard_idx
 
     def read(self, keys):
@@ -98,9 +102,7 @@ class FlatSWSTM(nn.Module):
         val_vec = key_vec
         idx = self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0)).item()
         self.value_map[idx] = value_str
-        # ★ Set self‑token to 10.0 to guarantee retrieval over random prototypes ★
-        with torch.no_grad():
-            self.self_token[idx] = 10.0
+        # (No manual token override – EMA in write handles it)
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
@@ -121,7 +123,7 @@ class FlatSWSTM(nn.Module):
         return results
 
     def train_step(self, keys, values, optimizer):
-        self.write(keys, values)      # no grad
+        self.write(keys, values)      # no grad, updates token
         read_values = self.read(keys) # grad flows
         recon_loss = F.mse_loss(read_values, values)
         margin_loss = self.margin_loss(keys)
@@ -203,9 +205,6 @@ class HierarchicalSWSTM(nn.Module):
                     global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
                     self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
-                    # ★ Set self‑token to 10.0 for this expert's slot ★
-                    with torch.no_grad():
-                        self.experts[c].self_token[slot_idx] = 10.0
         self.fact_count += keys.size(0)
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
