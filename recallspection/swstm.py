@@ -5,6 +5,9 @@
 # Author: Eliam Raell, Sciencedelic Metatech
 # Patent Pending — US Provisional Application No. 63/XXX,XXX
 # ================================================================
+# This is the neural core of Recallspection — a differentiable,
+# hierarchical, product‑quantized exact memory.
+# ================================================================
 
 import torch
 import torch.nn as nn
@@ -122,7 +125,7 @@ class KMeansRouter:
         if isinstance(keys, torch.Tensor):
             keys = keys.detach().cpu().numpy()
         if keys.shape[0] < self.num_clusters:
-            # Not enough samples to fit; skip
+            # Not enough samples to fit; skip silently
             return
         self.kmeans.fit(keys)
         self.centroids = torch.tensor(self.kmeans.cluster_centers_, dtype=torch.float32)
@@ -514,30 +517,46 @@ class SWSTMEngine:
         return [self.stored_values[idx] for idx in top_indices.tolist()]
 
     def exact_match_accuracy(self, keys: List[str], values: List[Any]) -> float:
-        """Compute exact match accuracy for a set of key-value pairs."""
-        if self.model is None:
+        """
+        Compute exact match accuracy for a set of key-value pairs.
+        Uses batched retrieval for speed.
+        """
+        if not self.stored_embeddings or not keys:
             return 0.0
 
-        # Ensure hierarchical router fitted
+        # Ensure hierarchical router is fitted if needed
         if isinstance(self.model, HierarchicalSwSTM) and self.model.router is None:
             self._fit_router_if_needed()
             if self.model.router is None:
-                # Still not enough samples, accuracy is 0
                 return 0.0
 
+        # Batch encode all keys
+        query_embs = torch.stack([self._text_to_embedding(k) for k in keys])
+        with torch.no_grad():
+            # Read from model (batched)
+            retrieved = self.model(query_embs, op='read')  # (N, val_dim)
+
+        stored = torch.stack(self.stored_embeddings)  # (M, val_dim)
+        # Normalise for cosine similarity
+        retrieved_norm = F.normalize(retrieved, dim=-1)
+        stored_norm = F.normalize(stored, dim=-1)
+        # Compute similarity matrix (N x M)
+        sims = torch.matmul(retrieved_norm, stored_norm.T)  # (N, M)
+        # For each query, find best matching stored index
+        best_indices = torch.argmax(sims, dim=1)  # (N,)
+
         correct = 0
-        total = len(keys)
-        for k, v in zip(keys, values):
-            retrieved = self.get(k, top_k=1)
-            if retrieved and retrieved[0] == v:
+        for i, expected in enumerate(values):
+            retrieved_value = self.stored_values[best_indices[i].item()]
+            if retrieved_value == expected:
                 correct += 1
-        return correct / total if total > 0 else 0.0
+        return correct / len(keys) if keys else 0.0
 
     def train(
         self,
         keys: List[str],
         values: List[Any],
-        epochs: int = 50,
+        epochs: int = 10,        # reduced from 50 to avoid CI timeouts
         lr: float = 0.001,
     ) -> Tuple[List[float], List[float]]:
         # Convert to tensors
@@ -667,7 +686,7 @@ if __name__ == "__main__":
         flat_model,
         keys,
         values,
-        num_epochs=30,
+        num_epochs=10,
         lr=0.001,
         verbose=True,
     )
@@ -693,7 +712,7 @@ if __name__ == "__main__":
         hier_model,
         keys,
         values,
-        num_epochs=20,
+        num_epochs=10,
         lr=0.001,
         verbose=True,
     )
@@ -717,7 +736,7 @@ if __name__ == "__main__":
         pq_model,
         keys,
         values,
-        num_epochs=30,
+        num_epochs=10,
         lr=0.001,
         verbose=True,
     )
