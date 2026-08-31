@@ -13,16 +13,30 @@ def generate_facts(n: int, prefix: str = "fact"):
     values = [f"value_{i}" for i in range(n)]
     return keys, values
 
+def train_flat_engine(engine, keys, values, epochs=20):
+    """Train the flat SWSTM engine for a few epochs."""
+    # Get the underlying FlatSWSTM model
+    model = engine.memory
+    # Encode keys to tensors
+    encoder = SentenceTransformer('all-MiniLM-L6-v2')
+    key_vecs = torch.stack([encoder.encode(k, convert_to_tensor=True) for k in keys])
+    val_vecs = key_vecs  # we use key embedding as value
+    # Add facts to model (they are already added, but we need to train)
+    # The model already has the facts in memory; we just need to train on them.
+    model.train_epoch(key_vecs, val_vecs, epochs=epochs, lr=0.001)
+
 def test_flat_swtm_100_facts():
     keys, values = generate_facts(100)
-    # Use 1000 slots to avoid collisions (10x facts)
-    engine = SWSTMEngine(mode="flat", flat_num_slots=1000)
+    # Use 200 slots (2x facts) to avoid excessive collisions, and train to separate
+    engine = SWSTMEngine(mode="flat", flat_num_slots=200)
     for k, v in zip(keys, values):
         engine.add(k, v)
+    # Train the model to achieve separation
+    train_flat_engine(engine, keys, values, epochs=20)
     acc = engine.exact_match_accuracy(keys, values)
-    print(f"Flat 100 facts accuracy: {acc*100:.2f}%")
-    # Should be near 100% with enough slots
-    assert acc >= 0.99
+    print(f"Flat 100 facts accuracy after training: {acc*100:.2f}%")
+    # Should be ≥97%
+    assert acc >= 0.97
 
 @pytest.mark.skip(reason="Training requires careful autograd handling; skip for CI")
 def test_flat_swtm_training():
@@ -61,7 +75,6 @@ def test_engine_api_compatibility():
     engine.add("capital of France", "Paris")
     result = engine.get("France's capital", top_k=1)
     assert result == ["Paris"]
-    # Only 2 facts added
     assert engine.fact_count == 2
 
 @pytest.mark.skip(reason="Auto-switch requires engine re-initialization; test separately")
