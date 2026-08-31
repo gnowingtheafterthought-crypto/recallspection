@@ -25,8 +25,9 @@ __version__ = "7.0"
 # Export all public classes
 __all__ = [
     "SWSTMExtraTrainable",
-    "FlatSWSTM",                    # alias for SWSTMExtraTrainable (for backward compatibility)
+    "FlatSWSTM",                    # alias for SWSTMExtraTrainable
     "HierarchicalSwSTM",
+    "HierarchicalSWSTM",            # alias for HierarchicalSwSTM (all caps for compat)
     "ProductQuantizedSWSTM",
     "SWSTMEngine",
     "train_swstm",
@@ -294,6 +295,10 @@ class HierarchicalSwSTM(nn.Module):
 
     def get_all_expert_stats(self) -> List[dict]:
         return [expert.get_usage() for expert in self.experts]
+
+
+# Alias for backward compatibility (all‑caps version)
+HierarchicalSWSTM = HierarchicalSwSTM
 
 
 # ================================================================
