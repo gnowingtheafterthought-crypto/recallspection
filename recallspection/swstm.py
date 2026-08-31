@@ -488,12 +488,13 @@ class SWSTMEngine:
                 self._prepare_batch()
             # For PQ, we do not auto‑fit; user must call fit_pq()
         else:
+           else:
             # Flat: add immediately
+            # Ensure vec is 1D (not batch)
+            if vec.dim() == 2 and vec.size(0) == 1:
+                vec = vec.squeeze(0)
             self.memory.add(vec, value)
-
-        self.fact_count += 1
-        return f"Added fact #{self.fact_count}"
-
+            
     def get(self, key: Union[str, torch.Tensor], top_k: int = 1) -> List[str]:
         """Retrieve value(s) for a query."""
         if self.memory is None:
