@@ -13,26 +13,23 @@ def generate_facts(n: int, prefix: str = "fact"):
     values = [f"value_{i}" for i in range(n)]
     return keys, values
 
-def train_flat_engine(engine, keys, values, epochs=20):
-    """Train the flat SWSTM engine for a few epochs."""
-    # Get the underlying FlatSWSTM model
+def train_flat_engine(engine, keys, values, epochs=100):
+    """Train the flat SWSTM engine for the given epochs."""
     model = engine.memory
-    # Encode keys to tensors
     encoder = SentenceTransformer('all-MiniLM-L6-v2')
     key_vecs = torch.stack([encoder.encode(k, convert_to_tensor=True) for k in keys])
     val_vecs = key_vecs  # we use key embedding as value
-    # Add facts to model (they are already added, but we need to train)
-    # The model already has the facts in memory; we just need to train on them.
+    # The model already has facts; train to separate.
     model.train_epoch(key_vecs, val_vecs, epochs=epochs, lr=0.001)
 
 def test_flat_swtm_100_facts():
     keys, values = generate_facts(100)
-    # Use 200 slots (2x facts) to avoid excessive collisions, and train to separate
+    # Use 200 slots (2x facts) – enough with training.
     engine = SWSTMEngine(mode="flat", flat_num_slots=200)
     for k, v in zip(keys, values):
         engine.add(k, v)
     # Train the model to achieve separation
-    train_flat_engine(engine, keys, values, epochs=20)
+    train_flat_engine(engine, keys, values, epochs=100)
     acc = engine.exact_match_accuracy(keys, values)
     print(f"Flat 100 facts accuracy after training: {acc*100:.2f}%")
     # Should be ≥97%
