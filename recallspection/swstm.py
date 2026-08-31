@@ -89,10 +89,14 @@ class FlatSWSTM(nn.Module):
 
     def add(self, key_vec: torch.Tensor, value_str: str) -> int:
         """Add a single key‑value pair. Returns slot index."""
-        # Ensure key_vec is not in inference mode (clone and set requires_grad)
+        # Ensure key_vec is 1D; if it's a batch of 1, squeeze it.
+        if key_vec.dim() == 2 and key_vec.size(0) == 1:
+            key_vec = key_vec.squeeze(0)
+        # Ensure it has requires_grad for training (if needed)
         if not key_vec.requires_grad:
             key_vec = key_vec.clone().detach().requires_grad_(True)
         val_vec = key_vec  # we store the key embedding as value for simplicity
+        # Now unsqueeze to add batch dimension for forward
         idx = self.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
         self.value_map[idx] = value_str
         return idx
@@ -132,12 +136,7 @@ class FlatSWSTM(nn.Module):
         total_loss = recon_loss + 0.1 * margin_loss
 
         optimizer.zero_grad()
-        total_loss.backward(retain_graph=True)  # we need to keep graph for the next step? Actually we only call backward once per step, so retain_graph is not needed; but we'll keep it False and ensure we don't call backward twice.
-        # Actually the issue is that we call forward twice inside this function, so we need to retain_graph to allow backward through both.
-        # Better: combine the two forward calls into one graph? We'll just use retain_graph=True.
-        # But after this, we need to release graph. We can set retain_graph=False and use create_graph=False.
-        # I'll restructure: compute loss without writing, then write and read in one forward? Simpler: use retain_graph=True.
-        # Many models use this pattern. We'll set retain_graph=True and then detach.
+        total_loss.backward(retain_graph=True)
         torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
         optimizer.step()
         return total_loss.item()
@@ -214,11 +213,12 @@ class HierarchicalSWSTM(nn.Module):
         for c in range(self.num_clusters):
             mask = (cluster_ids == c)
             if mask.any():
-                idx = self.experts[c].forward(keys[mask], values[mask], op="write")
-                # store global mapping
-                for i, slot in enumerate(idx.tolist()):
-                    global_idx = c * self.slots_per_expert + slot
+                slot_indices = self.experts[c].forward(keys[mask], values[mask], op="write")
+                for i, slot_idx in enumerate(slot_indices.tolist()):
+                    global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
+                    # Also store in expert's value_map so expert.get works
+                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
         self.fact_count += keys.size(0)
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
@@ -230,9 +230,6 @@ class HierarchicalSWSTM(nn.Module):
         return results
 
     def exact_match_accuracy(self, test_keys, test_values):
-        # This is a placeholder; we need a way to map global index to value.
-        # For testing, we'll just use the value map from the experts.
-        # We'll iterate over test_keys and see if the retrieved value matches.
         correct = 0
         for k, v in zip(test_keys, test_values):
             retrieved = self.get(k, top_k=1)
@@ -483,18 +480,18 @@ class SWSTMEngine:
         if isinstance(self.memory, (HierarchicalSWSTM, PQSWSTM)):
             self.pending_keys.append(vec)
             self.pending_values.append(value)
-            # Auto‑fit for hierarchical when we have enough (e.g., 100 facts)
             if isinstance(self.memory, HierarchicalSWSTM) and len(self.pending_keys) >= 100:
                 self._prepare_batch()
-            # For PQ, we do not auto‑fit; user must call fit_pq()
         else:
-           else:
             # Flat: add immediately
-            # Ensure vec is 1D (not batch)
+            # Ensure vec is 1D (not a batch) before passing to FlatSWSTM.add
             if vec.dim() == 2 and vec.size(0) == 1:
                 vec = vec.squeeze(0)
             self.memory.add(vec, value)
-            
+
+        self.fact_count += 1
+        return f"Added fact #{self.fact_count}"
+
     def get(self, key: Union[str, torch.Tensor], top_k: int = 1) -> List[str]:
         """Retrieve value(s) for a query."""
         if self.memory is None:
