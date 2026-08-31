@@ -95,12 +95,12 @@ class FlatSWSTM(nn.Module):
             key_vec = key_vec.squeeze(0)
         if not key_vec.requires_grad:
             key_vec = key_vec.clone().detach().requires_grad_(True)
-        val_vec = key_vec  # store key embedding as value
+        val_vec = key_vec
         idx = self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0)).item()
         self.value_map[idx] = value_str
-        # ★★★ Set self-token high to guarantee retrieval ★★★
+        # ★ Set self‑token to 10.0 to guarantee retrieval over random prototypes ★
         with torch.no_grad():
-            self.self_token[idx] = 1.0
+            self.self_token[idx] = 10.0
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
@@ -203,9 +203,9 @@ class HierarchicalSWSTM(nn.Module):
                     global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
                     self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
-                    # ★★★ Set self-token for the expert's slot ★★★
+                    # ★ Set self‑token to 10.0 for this expert's slot ★
                     with torch.no_grad():
-                        self.experts[c].self_token[slot_idx] = 1.0
+                        self.experts[c].self_token[slot_idx] = 10.0
         self.fact_count += keys.size(0)
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
