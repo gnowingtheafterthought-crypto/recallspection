@@ -19,15 +19,7 @@ import warnings
 # -----------------------------------------------------------------------------
 
 class FlatSWSTM(nn.Module):
-    def __init__(
-        self,
-        num_slots: int,
-        key_dim: int = 384,
-        val_dim: int = 384,
-        temperature: float = 0.01,
-        margin: float = 0.2,
-        token_beta: float = 0.9,
-    ):
+    def __init__(self, num_slots, key_dim=384, val_dim=384, temperature=0.01, margin=0.2, token_beta=0.9):
         super().__init__()
         self.num_slots = num_slots
         self.key_dim = key_dim
@@ -38,68 +30,85 @@ class FlatSWSTM(nn.Module):
 
         self.prototypes = nn.Parameter(torch.randn(num_slots, key_dim) * 0.02)
         self.self_token = nn.Parameter(torch.zeros(num_slots))
-
         self.register_buffer("memory", torch.zeros(num_slots, val_dim))
         self.register_buffer("used", torch.zeros(num_slots, dtype=torch.bool))
         self.register_buffer("slot_count", torch.zeros(num_slots, dtype=torch.long))
-
         self.fact_count = 0
         self.value_map: Dict[int, str] = {}
 
-    def forward(self, keys, values=None, op="write"):
-        if not keys.requires_grad:
-            keys = keys.clone().detach().requires_grad_(True) if op == "write" else keys.clone()
+    def _get_weights(self, keys, with_grad=True):
+        """Compute assignment weights. If with_grad=False, uses torch.no_grad."""
+        if not with_grad:
+            keys = keys.detach()
         device = keys.device
         norm_keys = F.normalize(keys, dim=-1)
-        norm_proto = F.normalize(self.prototypes, dim=-1)
+        norm_proto = F.normalize(self.prototypes.to(device), dim=-1)
         self_token = self.self_token.to(device)
         sims = torch.mm(norm_keys, norm_proto.T) + self_token.unsqueeze(0)
-
         soft_w = F.softmax(sims / self.temperature, dim=-1)
         hard_idx = torch.argmax(soft_w, dim=-1)
         one_hot = F.one_hot(hard_idx, num_classes=self.num_slots).float()
-        weights = one_hot.detach() + soft_w - soft_w.detach()
+        weights = one_hot.detach() + (soft_w - soft_w.detach())  # STE
+        return weights, sims
 
-        if op == "write":
-            if values is not None and not values.requires_grad:
-                values = values.clone().detach().requires_grad_(True)
-            delta = torch.einsum("bn,bd->nd", weights, values)
+    def write(self, keys, values):
+        """Write phase: no gradients."""
+        with torch.no_grad():
+            # For inference, values are tensors, but we store them in memory.
+            # Here we assume keys and values are already on the right device.
+            weights, _ = self._get_weights(keys, with_grad=False)
+            delta = torch.einsum('bn,bd->nd', weights, values)
             self.memory = self.memory + delta
+            # Mark used slots
+            hard_idx = torch.argmax(weights, dim=-1)
             self.used[hard_idx] = True
             self.slot_count[hard_idx] += 1
-
-            # Update self‑token with max similarity (EMA) – for training
-            with torch.no_grad():
-                max_sim, _ = torch.max(sims, dim=-1)
-                for i, idx in enumerate(hard_idx):
-                    self.self_token[idx] = (
-                        self.token_beta * self.self_token[idx]
-                        + (1 - self.token_beta) * max_sim[i].item()
-                    )
             self.fact_count += keys.size(0)
-            return hard_idx
-        else:  # read (used during training only)
-            return torch.mm(weights, self.memory)
+
+    def read(self, keys):
+        """Read phase: gradients flow through this."""
+        weights, _ = self._get_weights(keys, with_grad=True)
+        return torch.matmul(weights, self.memory)
+
+    def read_exact(self, keys):
+        """Hard read for validation (no gradients)."""
+        with torch.no_grad():
+            weights, _ = self._get_weights(keys, with_grad=False)
+            return torch.matmul(weights, self.memory)
+
+    def margin_loss(self, keys):
+        """Compute margin loss from similarities."""
+        _, sims = self._get_weights(keys, with_grad=True)
+        top1, _ = sims.topk(1, dim=-1)
+        top2, _ = sims.topk(2, dim=-1)
+        return torch.mean(torch.relu(self.margin - (top1.squeeze() - top2[:, 1])))
 
     def add(self, key_vec: torch.Tensor, value_str: str) -> int:
+        """Add a single fact (for inference)."""
         if key_vec.dim() == 2 and key_vec.size(0) == 1:
             key_vec = key_vec.squeeze(0)
         if not key_vec.requires_grad:
             key_vec = key_vec.clone().detach().requires_grad_(True)
-        val_vec = key_vec
-        idx = self.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
+        val_vec = key_vec  # store key embedding as value
+        # Use write (no grad) to store in memory
+        self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0))
+        # Get the slot index used (hard assignment)
+        with torch.no_grad():
+            weights, _ = self._get_weights(key_vec.unsqueeze(0), with_grad=False)
+            idx = torch.argmax(weights, dim=-1).item()
         self.value_map[idx] = value_str
-        # **FIX**: Set self_token for this slot to a high value to guarantee retrieval
+        # **Crucial:** Set self_token to 1.0 for this slot to guarantee retrieval.
         with torch.no_grad():
             self.self_token[idx] = 1.0
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
+        """Retrieve values (inference)."""
         if not query_vec.requires_grad:
             query_vec = query_vec.clone()
         device = query_vec.device
+        # Use prototypes + self_token for similarity (same as write)
         norm_q = F.normalize(query_vec.unsqueeze(0), dim=-1)
-        # Compare to prototypes (not memory) – same as during write
         norm_proto = F.normalize(self.prototypes.to(device), dim=-1)
         self_token = self.self_token.to(device)
         sims = torch.mm(norm_q, norm_proto.T) + self_token.unsqueeze(0)
@@ -111,24 +120,16 @@ class FlatSWSTM(nn.Module):
                 results.append(self.value_map[idx])
         return results
 
-    def margin_loss(self, sims):
-        top1, _ = torch.topk(sims, 2, dim=-1)
-        return torch.mean(torch.relu(self.margin - (top1[:, 0] - top1[:, 1])))
-
     def train_step(self, keys, values, optimizer):
-        self.forward(keys, values, op="write")
-        read_values = self.forward(keys, op="read")
+        # Write phase (no grad)
+        self.write(keys, values)
+        # Read phase (grad)
+        read_values = self.read(keys)
         recon_loss = F.mse_loss(read_values, values)
-
-        norm_keys = F.normalize(keys, dim=-1)
-        norm_proto = F.normalize(self.prototypes, dim=-1)
-        sims = torch.mm(norm_keys, norm_proto.T) + self.self_token.unsqueeze(0)
-        margin_loss = self.margin_loss(sims)
-
+        margin_loss = self.margin_loss(keys)
         total_loss = recon_loss + 0.1 * margin_loss
-
         optimizer.zero_grad()
-        total_loss.backward(retain_graph=True)
+        total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
         optimizer.step()
         return total_loss.item()
@@ -136,7 +137,6 @@ class FlatSWSTM(nn.Module):
     def train_epoch(self, keys, values, epochs=100, lr=0.001):
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
-        losses = []
         for epoch in range(epochs):
             perm = torch.randperm(len(keys))
             total_loss = 0.0
@@ -145,10 +145,8 @@ class FlatSWSTM(nn.Module):
                 total_loss += loss
             scheduler.step()
             avg_loss = total_loss / len(keys)
-            losses.append(avg_loss)
             if epoch % 20 == 0:
                 print(f"Epoch {epoch}: avg loss = {avg_loss:.4f}")
-        return losses
 
     def exact_match_accuracy(self, test_keys, test_values):
         correct = 0
@@ -157,7 +155,6 @@ class FlatSWSTM(nn.Module):
             if retrieved and retrieved[0] == v:
                 correct += 1
         return correct / len(test_keys) if test_keys else 0.0
-
 
 # -----------------------------------------------------------------------------
 # Hierarchical SWSTM (Router‑Expert)
