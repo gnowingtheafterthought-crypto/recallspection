@@ -15,11 +15,19 @@ import json
 import warnings
 
 # -----------------------------------------------------------------------------
-# Flat SWSTM (STE + Margin + Self‑token)
+# Flat SWSTM (STE + Margin + Self‑token) – decoupled write/read
 # -----------------------------------------------------------------------------
 
 class FlatSWSTM(nn.Module):
-    def __init__(self, num_slots, key_dim=384, val_dim=384, temperature=0.01, margin=0.2, token_beta=0.9):
+    def __init__(
+        self,
+        num_slots: int,
+        key_dim: int = 384,
+        val_dim: int = 384,
+        temperature: float = 0.01,
+        margin: float = 0.2,
+        token_beta: float = 0.9,
+    ):
         super().__init__()
         self.num_slots = num_slots
         self.key_dim = key_dim
@@ -30,14 +38,15 @@ class FlatSWSTM(nn.Module):
 
         self.prototypes = nn.Parameter(torch.randn(num_slots, key_dim) * 0.02)
         self.self_token = nn.Parameter(torch.zeros(num_slots))
+
         self.register_buffer("memory", torch.zeros(num_slots, val_dim))
         self.register_buffer("used", torch.zeros(num_slots, dtype=torch.bool))
         self.register_buffer("slot_count", torch.zeros(num_slots, dtype=torch.long))
+
         self.fact_count = 0
         self.value_map: Dict[int, str] = {}
 
     def _get_weights(self, keys, with_grad=True):
-        """Compute assignment weights. If with_grad=False, uses torch.no_grad."""
         if not with_grad:
             keys = keys.detach()
         device = keys.device
@@ -52,18 +61,16 @@ class FlatSWSTM(nn.Module):
         return weights, sims
 
     def write(self, keys, values):
-        """Write phase: no gradients."""
+        """Write phase: no gradients. Returns hard indices."""
         with torch.no_grad():
-            # For inference, values are tensors, but we store them in memory.
-            # Here we assume keys and values are already on the right device.
             weights, _ = self._get_weights(keys, with_grad=False)
             delta = torch.einsum('bn,bd->nd', weights, values)
             self.memory = self.memory + delta
-            # Mark used slots
             hard_idx = torch.argmax(weights, dim=-1)
             self.used[hard_idx] = True
             self.slot_count[hard_idx] += 1
             self.fact_count += keys.size(0)
+            return hard_idx
 
     def read(self, keys):
         """Read phase: gradients flow through this."""
@@ -77,7 +84,6 @@ class FlatSWSTM(nn.Module):
             return torch.matmul(weights, self.memory)
 
     def margin_loss(self, keys):
-        """Compute margin loss from similarities."""
         _, sims = self._get_weights(keys, with_grad=True)
         top1, _ = sims.topk(1, dim=-1)
         top2, _ = sims.topk(2, dim=-1)
@@ -90,16 +96,8 @@ class FlatSWSTM(nn.Module):
         if not key_vec.requires_grad:
             key_vec = key_vec.clone().detach().requires_grad_(True)
         val_vec = key_vec  # store key embedding as value
-        # Use write (no grad) to store in memory
-        self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0))
-        # Get the slot index used (hard assignment)
-        with torch.no_grad():
-            weights, _ = self._get_weights(key_vec.unsqueeze(0), with_grad=False)
-            idx = torch.argmax(weights, dim=-1).item()
+        idx = self.write(key_vec.unsqueeze(0), val_vec.unsqueeze(0)).item()
         self.value_map[idx] = value_str
-        # **Crucial:** Set self_token to 1.0 for this slot to guarantee retrieval.
-        with torch.no_grad():
-            self.self_token[idx] = 1.0
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
@@ -107,7 +105,6 @@ class FlatSWSTM(nn.Module):
         if not query_vec.requires_grad:
             query_vec = query_vec.clone()
         device = query_vec.device
-        # Use prototypes + self_token for similarity (same as write)
         norm_q = F.normalize(query_vec.unsqueeze(0), dim=-1)
         norm_proto = F.normalize(self.prototypes.to(device), dim=-1)
         self_token = self.self_token.to(device)
@@ -121,10 +118,8 @@ class FlatSWSTM(nn.Module):
         return results
 
     def train_step(self, keys, values, optimizer):
-        # Write phase (no grad)
-        self.write(keys, values)
-        # Read phase (grad)
-        read_values = self.read(keys)
+        self.write(keys, values)      # no grad
+        read_values = self.read(keys) # grad flows
         recon_loss = F.mse_loss(read_values, values)
         margin_loss = self.margin_loss(keys)
         total_loss = recon_loss + 0.1 * margin_loss
@@ -155,6 +150,7 @@ class FlatSWSTM(nn.Module):
             if retrieved and retrieved[0] == v:
                 correct += 1
         return correct / len(test_keys) if test_keys else 0.0
+
 
 # -----------------------------------------------------------------------------
 # Hierarchical SWSTM (Router‑Expert)
@@ -199,11 +195,11 @@ class HierarchicalSWSTM(nn.Module):
         for c in range(self.num_clusters):
             mask = (cluster_ids == c)
             if mask.any():
-                slot_indices = self.experts[c].forward(keys[mask], values[mask], op="write")
+                slot_indices = self.experts[c].write(keys[mask], values[mask])
                 for i, slot_idx in enumerate(slot_indices.tolist()):
                     global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
-                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
+                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()
         self.fact_count += keys.size(0)
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
