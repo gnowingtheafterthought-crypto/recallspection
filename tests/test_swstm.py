@@ -23,7 +23,7 @@ def test_flat_swtm_100_facts():
         engine.add(k, v)
     acc = engine.exact_match_accuracy(keys, values)
     print(f"Flat 100 facts accuracy: {acc*100:.2f}%")
-    # With 10x slots, retrieval is guaranteed without training.
+    # With 10x slots and self-token=1, retrieval is guaranteed.
     assert acc >= 0.99
 
 # -----------------------------------------------------------------------------
