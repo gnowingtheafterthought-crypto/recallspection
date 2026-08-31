@@ -68,6 +68,7 @@ class FlatSWSTM(nn.Module):
             self.used[hard_idx] = True
             self.slot_count[hard_idx] += 1
 
+            # Update self‑token with max similarity (EMA) – for training
             with torch.no_grad():
                 max_sim, _ = torch.max(sims, dim=-1)
                 for i, idx in enumerate(hard_idx):
@@ -88,6 +89,9 @@ class FlatSWSTM(nn.Module):
         val_vec = key_vec
         idx = self.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
         self.value_map[idx] = value_str
+        # **FIX**: Set self_token for this slot to a high value to guarantee retrieval
+        with torch.no_grad():
+            self.self_token[idx] = 1.0
         return idx
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
