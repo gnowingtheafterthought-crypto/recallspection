@@ -53,6 +53,9 @@ class FlatSWSTM(nn.Module):
         self.value_map: Dict[int, str] = {}  # slot index → original string
 
     def forward(self, keys, values=None, op="write"):
+        # Ensure tensors are not in inference mode (clone if needed)
+        if not keys.requires_grad:
+            keys = keys.clone().detach().requires_grad_(True) if op == "write" else keys.clone()
         norm_keys = F.normalize(keys, dim=-1)
         norm_proto = F.normalize(self.prototypes, dim=-1)
         sims = torch.mm(norm_keys, norm_proto.T) + self.self_token.unsqueeze(0)
@@ -63,6 +66,9 @@ class FlatSWSTM(nn.Module):
         weights = one_hot.detach() + soft_w - soft_w.detach()  # STE
 
         if op == "write":
+            # values may also be inference tensors; clone them
+            if values is not None and not values.requires_grad:
+                values = values.clone().detach().requires_grad_(True)
             delta = torch.einsum("bn,bd->nd", weights, values)
             self.memory = self.memory + delta
             self.used[hard_idx] = True
@@ -83,6 +89,9 @@ class FlatSWSTM(nn.Module):
 
     def add(self, key_vec: torch.Tensor, value_str: str) -> int:
         """Add a single key‑value pair. Returns slot index."""
+        # Ensure key_vec is not in inference mode (clone and set requires_grad)
+        if not key_vec.requires_grad:
+            key_vec = key_vec.clone().detach().requires_grad_(True)
         val_vec = key_vec  # we store the key embedding as value for simplicity
         idx = self.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
         self.value_map[idx] = value_str
@@ -90,6 +99,8 @@ class FlatSWSTM(nn.Module):
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
         """Retrieve top‑k values for a query."""
+        if not query_vec.requires_grad:
+            query_vec = query_vec.clone()
         norm_q = F.normalize(query_vec.unsqueeze(0), dim=-1)
         norm_mem = F.normalize(self.memory, dim=-1)
         sims = torch.mm(norm_q, norm_mem.T)
@@ -121,7 +132,12 @@ class FlatSWSTM(nn.Module):
         total_loss = recon_loss + 0.1 * margin_loss
 
         optimizer.zero_grad()
-        total_loss.backward()
+        total_loss.backward(retain_graph=True)  # we need to keep graph for the next step? Actually we only call backward once per step, so retain_graph is not needed; but we'll keep it False and ensure we don't call backward twice.
+        # Actually the issue is that we call forward twice inside this function, so we need to retain_graph to allow backward through both.
+        # Better: combine the two forward calls into one graph? We'll just use retain_graph=True.
+        # But after this, we need to release graph. We can set retain_graph=False and use create_graph=False.
+        # I'll restructure: compute loss without writing, then write and read in one forward? Simpler: use retain_graph=True.
+        # Many models use this pattern. We'll set retain_graph=True and then detach.
         torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
         optimizer.step()
         return total_loss.item()
@@ -212,6 +228,17 @@ class HierarchicalSWSTM(nn.Module):
         c = torch.argmin(dists).item()
         results = self.experts[c].get(query_vec, top_k=top_k)
         return results
+
+    def exact_match_accuracy(self, test_keys, test_values):
+        # This is a placeholder; we need a way to map global index to value.
+        # For testing, we'll just use the value map from the experts.
+        # We'll iterate over test_keys and see if the retrieved value matches.
+        correct = 0
+        for k, v in zip(test_keys, test_values):
+            retrieved = self.get(k, top_k=1)
+            if retrieved and retrieved[0] == v:
+                correct += 1
+        return correct / len(test_keys) if test_keys else 0.0
 
 
 # -----------------------------------------------------------------------------
