@@ -5,9 +5,6 @@
 # Author: Eliam Raell, Sciencedelic Metatech
 # Patent Pending — US Provisional Application No. 63/XXX,XXX
 # ================================================================
-# This is the neural core of Recallspection — a differentiable,
-# hierarchical, product‑quantized exact memory.
-# ================================================================
 
 import torch
 import torch.nn as nn
@@ -124,9 +121,11 @@ class KMeansRouter:
     def fit(self, keys: Union[np.ndarray, torch.Tensor]):
         if isinstance(keys, torch.Tensor):
             keys = keys.detach().cpu().numpy()
+        if keys.shape[0] < self.num_clusters:
+            # Not enough samples to fit; skip
+            return
         self.kmeans.fit(keys)
         self.centroids = torch.tensor(self.kmeans.cluster_centers_, dtype=torch.float32)
-        return self
 
     def assign(self, keys: torch.Tensor) -> torch.Tensor:
         if self.centroids is None:
@@ -344,27 +343,19 @@ PQSWSTM = ProductQuantizedSWSTM
 
 
 # ================================================================
-# 4. HIGH‑LEVEL SWSTM ENGINE (with add/get)
+# 4. HIGH‑LEVEL SWSTM ENGINE (with add/get/exact_match_accuracy)
 # ================================================================
 class SWSTMEngine:
-    """
-    High‑level SWSTM engine with auto‑mode selection.
-    """
-
     def __init__(
         self,
         mode: str = "auto",
         key_dim: int = 768,
         val_dim: int = 768,
-        # Flat parameters
         flat_num_slots: Optional[int] = None,
-        # Hierarchical parameters
         hierarchical_num_clusters: Optional[int] = None,
         hierarchical_slots_per_expert: Optional[int] = None,
-        # PQ parameters
         pq_num_subvectors: Optional[int] = None,
         pq_num_centroids: Optional[int] = None,
-        # Legacy fallbacks
         num_clusters: int = 10,
         slots_per_expert: int = 2000,
         num_subvectors: int = 24,
@@ -385,6 +376,19 @@ class SWSTMEngine:
         self.fact_count = 0
         self.fact_keys: List[str] = []
         self.fact_values: List[Any] = []
+
+        # For retrieval
+        self.stored_embeddings: List[torch.Tensor] = []
+        self.stored_values: List[Any] = []
+        self.stored_keys: List[str] = []
+
+        # Optional semantic encoder (sentence-transformers)
+        self._encoder = None
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._encoder = SentenceTransformer('all-MiniLM-L6-v2')
+        except ImportError:
+            pass  # fallback to hash-based embedding
 
     def _create_model(self, num_facts: int) -> nn.Module:
         if self.mode == "flat" or (self.mode == "auto" and num_facts <= 1000):
@@ -411,56 +415,123 @@ class SWSTMEngine:
             )
 
     def _text_to_embedding(self, text: str) -> torch.Tensor:
-        # Simple deterministic embedding: SHA‑256 hash → float vector
-        hash_bytes = hashlib.sha256(text.encode()).digest()
-        import struct
-        floats = [struct.unpack('f', hash_bytes[i:i+4])[0] for i in range(0, min(len(hash_bytes), self.key_dim * 4), 4)]
-        if len(floats) < self.key_dim:
-            floats.extend([0.0] * (self.key_dim - len(floats)))
+        """Convert text to embedding using semantic encoder if available, else hash."""
+        if self._encoder is not None:
+            # Use sentence-transformer
+            emb = self._encoder.encode(text, convert_to_tensor=True)
+            # Ensure correct dimension
+            if emb.shape[0] != self.key_dim:
+                # Pad or truncate to key_dim
+                if emb.shape[0] > self.key_dim:
+                    emb = emb[:self.key_dim]
+                else:
+                    # Pad with zeros
+                    pad = torch.zeros(self.key_dim - emb.shape[0])
+                    emb = torch.cat([emb, pad])
+            return emb
         else:
-            floats = floats[:self.key_dim]
-        return torch.tensor(floats, dtype=torch.float32)
+            # Fallback: SHA‑256 hash → float vector
+            hash_bytes = hashlib.sha256(text.encode()).digest()
+            import struct
+            floats = [struct.unpack('f', hash_bytes[i:i+4])[0] for i in range(0, min(len(hash_bytes), self.key_dim * 4), 4)]
+            if len(floats) < self.key_dim:
+                floats.extend([0.0] * (self.key_dim - len(floats)))
+            else:
+                floats = floats[:self.key_dim]
+            return torch.tensor(floats, dtype=torch.float32)
+
+    def _fit_router_if_needed(self):
+        """Fit hierarchical router if we have enough samples."""
+        if isinstance(self.model, HierarchicalSwSTM) and self.model.router is None:
+            if len(self.fact_keys) >= self.hierarchical_num_clusters:
+                all_keys = torch.stack([self._text_to_embedding(k) for k in self.fact_keys])
+                self.model.fit_router_kmeans(all_keys)
+                # Write all pending facts
+                if self.fact_keys:
+                    all_vals = torch.stack([
+                        self._text_to_embedding(json.dumps(v, sort_keys=True)) for v in self.fact_values
+                    ])
+                    self.model(all_keys, all_vals, op="write")
 
     def add(self, key: str, value: Any) -> bool:
-        """
-        Add a fact to the memory.
-        """
         key_embedding = self._text_to_embedding(key)
         value_embedding = self._text_to_embedding(json.dumps(value, sort_keys=True))
 
         self.fact_keys.append(key)
         self.fact_values.append(value)
+        self.stored_keys.append(key)
+        self.stored_values.append(value)
+        self.stored_embeddings.append(value_embedding)
 
         if self.model is None:
             self.model = self._create_model(1)
             self.is_trained = False
 
-        if isinstance(self.model, HierarchicalSwSTM) and self.model.router is None:
-            all_keys = torch.stack([self._text_to_embedding(k) for k in self.fact_keys])
-            self.model.fit_router_kmeans(all_keys)
+        # For flat/PQ, write immediately. For hierarchical, write only if router is fitted.
+        if not isinstance(self.model, HierarchicalSwSTM):
+            keys_tensor = key_embedding.unsqueeze(0)
+            values_tensor = value_embedding.unsqueeze(0)
+            self.model(keys_tensor, values_tensor, op="write")
+        else:
+            # Hierarchical: try to fit router if possible; if not, just store.
+            self._fit_router_if_needed()
+            # If router is now fitted, we need to write all accumulated facts.
+            if self.model.router is not None:
+                # Write all pending facts (including this one)
+                all_keys = torch.stack([self._text_to_embedding(k) for k in self.fact_keys])
+                all_vals = torch.stack([
+                    self._text_to_embedding(json.dumps(v, sort_keys=True)) for v in self.fact_values
+                ])
+                self.model(all_keys, all_vals, op="write")
 
-        keys_tensor = key_embedding.unsqueeze(0)
-        values_tensor = value_embedding.unsqueeze(0)
-
-        self.model(keys_tensor, values_tensor, op="write")
         self.fact_count += 1
         return True
 
     def get(self, query: str, top_k: int = 1) -> List[Any]:
-        """
-        Retrieve facts by semantic similarity.
-        """
-        if self.model is None or self.fact_count == 0:
+        if self.model is None or not self.fact_keys:
             return []
 
-        query_embedding = self._text_to_embedding(query).unsqueeze(0)
+        # Ensure hierarchical router is fitted if needed
+        if isinstance(self.model, HierarchicalSwSTM) and self.model.router is None:
+            self._fit_router_if_needed()
+            if self.model.router is None:
+                # Still not enough samples, cannot retrieve
+                return []
 
+        q_emb = self._text_to_embedding(query).unsqueeze(0)
         with torch.no_grad():
-            result = self.model(query_embedding, op="read")
+            # Read from model
+            retrieved_emb = self.model(q_emb, op="read")  # (1, val_dim)
 
-        # For simplicity, return stored values (the model returns an embedding)
-        # In a real system we'd decode – here we just return the first few stored values.
-        return self.fact_values[:top_k]
+        # Cosine similarity against stored value embeddings
+        if not self.stored_embeddings:
+            return []
+        stored = torch.stack(self.stored_embeddings)  # (N, val_dim)
+        q_norm = F.normalize(retrieved_emb, dim=-1)
+        stored_norm = F.normalize(stored, dim=-1)
+        cos_sim = torch.matmul(q_norm, stored_norm.T).squeeze(0)  # (N,)
+        top_indices = torch.topk(cos_sim, min(top_k, len(self.stored_embeddings))).indices
+        return [self.stored_values[idx] for idx in top_indices.tolist()]
+
+    def exact_match_accuracy(self, keys: List[str], values: List[Any]) -> float:
+        """Compute exact match accuracy for a set of key-value pairs."""
+        if self.model is None:
+            return 0.0
+
+        # Ensure hierarchical router fitted
+        if isinstance(self.model, HierarchicalSwSTM) and self.model.router is None:
+            self._fit_router_if_needed()
+            if self.model.router is None:
+                # Still not enough samples, accuracy is 0
+                return 0.0
+
+        correct = 0
+        total = len(keys)
+        for k, v in zip(keys, values):
+            retrieved = self.get(k, top_k=1)
+            if retrieved and retrieved[0] == v:
+                correct += 1
+        return correct / total if total > 0 else 0.0
 
     def train(
         self,
@@ -469,9 +540,7 @@ class SWSTMEngine:
         epochs: int = 50,
         lr: float = 0.001,
     ) -> Tuple[List[float], List[float]]:
-        """
-        Train the SWSTM model on a dataset.
-        """
+        # Convert to tensors
         key_tensors = torch.stack([self._text_to_embedding(k) for k in keys])
         value_tensors = torch.stack([
             self._text_to_embedding(json.dumps(v, sort_keys=True)) for v in values
@@ -566,7 +635,7 @@ def train_swstm(
 
 
 # ================================================================
-# 6. USAGE EXAMPLE (self-test)
+# 6. SELF-TEST
 # ================================================================
 if __name__ == "__main__":
     print("=" * 70)
