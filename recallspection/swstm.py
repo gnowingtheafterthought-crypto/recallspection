@@ -199,7 +199,7 @@ class HierarchicalSWSTM(nn.Module):
                 for i, slot_idx in enumerate(slot_indices.tolist()):
                     global_idx = c * self.slots_per_expert + slot_idx
                     self.global_value_map[global_idx] = value_strings[mask.nonzero()[i].item()]
-                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()
+                    self.experts[c].value_map[slot_idx] = value_strings[mask.nonzero()[i].item()]
         self.fact_count += keys.size(0)
 
     def get(self, query_vec: torch.Tensor, top_k: int = 1) -> List[str]:
