@@ -27,8 +27,9 @@ __all__ = [
     "SWSTMExtraTrainable",
     "FlatSWSTM",                    # alias for SWSTMExtraTrainable
     "HierarchicalSwSTM",
-    "HierarchicalSWSTM",            # alias for HierarchicalSwSTM (all caps for compat)
+    "HierarchicalSWSTM",            # alias for HierarchicalSwSTM (all caps)
     "ProductQuantizedSWSTM",
+    "PQEncoder",                    # alias for ProductQuantizedSWSTM
     "SWSTMEngine",
     "train_swstm",
     "KMeansRouter",
@@ -472,6 +473,10 @@ class ProductQuantizedSWSTM(nn.Module):
             "usage_ratio": used_slots / self.num_slots,
             "pq_bytes_per_fact": self.num_subvectors,  # 24 bytes for 24 subvectors
         }
+
+
+# Alias for backward compatibility
+PQEncoder = ProductQuantizedSWSTM
 
 
 # ================================================================
