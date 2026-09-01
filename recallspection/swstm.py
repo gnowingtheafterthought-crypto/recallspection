@@ -235,8 +235,8 @@ class SWSTMEngine:
         if isinstance(self.memory, SWSTMExtraTrainable):
             with torch.no_grad():
                 idx = self.memory.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
-            # ★ Set UNIQUE self-token using slot index ★
-            self.memory.self_token.data[idx] = float(idx) + 1.0
+            # ★ Set a LARGE, UNIQUE self‑token ★
+            self.memory.self_token.data[idx] = 100.0 + float(idx)
             self.value_map[idx] = value
             self.fact_count += 1
 
@@ -335,8 +335,8 @@ class SWSTMEngine:
                         idx = torch.argmax(sims, dim=-1).item()
                         global_idx = c * self.hierarchical_slots_per_expert + idx
                         self.memory.global_value_map[global_idx] = v
-                        # ★ Set UNIQUE token using slot index ★
-                        expert.self_token.data[idx] = float(idx) + 1.0
+                        # ★ Set LARGE UNIQUE token for this slot ★
+                        expert.self_token.data[idx] = 100.0 + float(idx)
                 self.pending_keys.clear()
                 self.pending_values.clear()
                 print(f"[SWSTM] Router fitted with {len(all_keys)} keys.")
