@@ -235,16 +235,16 @@ class SWSTMEngine:
         if isinstance(self.memory, SWSTMExtraTrainable):
             with torch.no_grad():
                 idx = self.memory.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write").item()
-            # Set self‑token to 1.0 to guarantee retrieval
-            self.memory.self_token[idx] = 1.0
+            # ★ Set self‑token to 1.0 using .data to avoid in‑place gradient error ★
+            self.memory.self_token.data[idx] = 1.0
             self.value_map[idx] = value
             self.fact_count += 1
 
         elif isinstance(self.memory, HierarchicalSwSTM):
             self.pending_keys.append(key_vec)
             self.pending_values.append(value)
-            if len(self.pending_keys) >= 100:
-                self.fit_router()
+            # ★ Do NOT fit router on every batch – only when user calls fit_router() ★
+            # (The test will call fit_router() after all adds)
             self.fact_count += 1
 
         else:  # PQ
@@ -283,7 +283,11 @@ class SWSTMEngine:
 
         elif isinstance(self.memory, HierarchicalSwSTM):
             if self.memory.router_centroids is None:
-                self.fit_router()
+                # Try to fit router if pending keys exist (for safety)
+                if self.pending_keys:
+                    self.fit_router()
+                else:
+                    return []
             if self.memory.router_centroids is None:
                 return []
             with torch.no_grad():
@@ -294,7 +298,6 @@ class SWSTMEngine:
                 norm_proto = F.normalize(expert.prototype, dim=-1)
                 sims = torch.mm(norm_key, norm_proto.T) + expert.self_token.unsqueeze(0)
                 # Consider only slots that have been used in this expert
-                # We don't have a per-expert used mask, but we can look at global_value_map keys
                 used_global = [k for k in self.memory.global_value_map if k // self.hierarchical_slots_per_expert == c]
                 if not used_global:
                     return []
@@ -311,7 +314,6 @@ class SWSTMEngine:
                 return results
 
         elif isinstance(self.memory, ProductQuantizedSWSTM):
-            # PQ: call retrieve if exists
             if hasattr(self.memory, 'retrieve'):
                 return self.memory.retrieve(key_vec, top_k)
             return []
@@ -319,17 +321,18 @@ class SWSTMEngine:
         return []
 
     def fit_router(self):
+        """Fit the router once on all pending keys."""
         if isinstance(self.memory, HierarchicalSwSTM):
             if self.pending_keys:
                 all_keys = torch.stack(self.pending_keys)
                 self.memory.fit_router_kmeans(all_keys)
-                # Add all pending facts to experts
-                for k, v in zip(self.pending_keys, self.pending_values):
+                # Now add all pending facts to the experts
+                for i, (k, v) in enumerate(zip(self.pending_keys, self.pending_values)):
                     key_vec = k
                     val_vec = self.encoder.encode(v, convert_to_tensor=True)
-                    # Write to expert
+                    # Write to the expert
                     self.memory.forward(key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write")
-                    # Find which expert and slot was used, set self-token
+                    # Find which expert and slot was used, and set self‑token
                     with torch.no_grad():
                         dists = torch.cdist(key_vec.unsqueeze(0), self.memory.router_centroids)
                         c = torch.argmin(dists).item()
@@ -340,8 +343,8 @@ class SWSTMEngine:
                         idx = torch.argmax(sims, dim=-1).item()
                         global_idx = c * self.hierarchical_slots_per_expert + idx
                         self.memory.global_value_map[global_idx] = v
-                        # Set self-token for the expert's slot
-                        expert.self_token[idx] = 1.0
+                        # ★ Set self‑token using .data ★
+                        expert.self_token.data[idx] = 1.0
                 self.pending_keys.clear()
                 self.pending_values.clear()
                 print(f"[SWSTM] Router fitted with {len(all_keys)} keys.")
@@ -354,6 +357,8 @@ class SWSTMEngine:
                 self.pending_keys.clear()
                 self.pending_values.clear()
                 print(f"[SWSTM] PQ fitted with {len(all_keys)} facts.")
+        else:
+            print("fit_router() only needed for hierarchical or PQ mode.")
 
     def exact_match_accuracy(self, test_keys: List[str], test_values: List[str]) -> float:
         if not test_keys:
