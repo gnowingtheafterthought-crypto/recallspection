@@ -10,12 +10,11 @@ import json
 import hashlib
 import zlib
 from pathlib import Path
-from typing import List, Optional, Union, Dict, Any, Tuple
+from typing import List, Optional, Union, Dict, Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
 
@@ -24,19 +23,20 @@ from sentence_transformers import SentenceTransformer
 # ================================================================
 
 class ExactMemory:
-    """Tamper-evident cryptographic key-value store."""
+    """Tamper-evident cryptographic key-value store. Pure Python, zero deps."""
+
     def __init__(self):
         self._storage: Dict[bytes, bytes] = {}
         self._fact_count = 0
 
     def _hash_key(self, key: Union[str, bytes]) -> bytes:
         if isinstance(key, str):
-            key = key.encode('utf-8')
+            key = key.encode("utf-8")
         return hashlib.sha3_256(key).digest()
 
     def _pack(self, value: Any) -> bytes:
         json_str = json.dumps(value, sort_keys=True)
-        compressed = zlib.compress(json_str.encode('utf-8'), level=6)
+        compressed = zlib.compress(json_str.encode("utf-8"), level=6)
         checksum = hashlib.sha256(compressed).digest()
         return checksum + compressed
 
@@ -47,7 +47,7 @@ class ExactMemory:
         if hashlib.sha256(compressed).digest() != checksum:
             return None
         try:
-            return json.loads(zlib.decompress(compressed).decode('utf-8'))
+            return json.loads(zlib.decompress(compressed).decode("utf-8"))
         except Exception:
             return None
 
@@ -59,8 +59,19 @@ class ExactMemory:
         packed = self._storage.get(self._hash_key(key))
         return self._unpack(packed) if packed else None
 
+    def delete(self, key: Union[str, bytes]) -> bool:
+        key_digest = self._hash_key(key)
+        if key_digest in self._storage:
+            del self._storage[key_digest]
+            self._fact_count -= 1
+            return True
+        return False
+
     def __len__(self) -> int:
         return self._fact_count
+
+    def __contains__(self, key: Union[str, bytes]) -> bool:
+        return self._hash_key(key) in self._storage
 
 
 # ================================================================
@@ -71,6 +82,7 @@ class SWSTMCore(nn.Module):
     """
     Flat SWSTM with STE-based hard slot selection.
     """
+
     def __init__(
         self,
         num_slots: int,
@@ -84,21 +96,28 @@ class SWSTMCore(nn.Module):
         self.key_dim = key_dim
         self.temperature = temperature
 
+        # Competitive addressing
         self.prototype = nn.Parameter(torch.randn(num_slots, key_dim) * 0.02)
         self.self_token = nn.Parameter(torch.zeros(num_slots))
 
+        # Memory bank
         self.register_buffer("memory", torch.zeros(num_slots, slot_dim))
         self.register_buffer("slot_occupied", torch.zeros(num_slots, dtype=torch.bool))
         self.register_buffer("write_count", torch.zeros(num_slots, dtype=torch.long))
 
-    def forward(self, keys: torch.Tensor, values: Optional[torch.Tensor] = None, op: str = "read"):
+    def forward(
+        self,
+        keys: torch.Tensor,
+        values: Optional[torch.Tensor] = None,
+        op: str = "read",
+    ):
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
         soft_w = F.softmax(sims / self.temperature, dim=-1)
         hard_idx = torch.argmax(soft_w, dim=-1)
         one_hot = F.one_hot(hard_idx, num_classes=self.num_slots).float()
-        weights = one_hot.detach() + (soft_w - soft_w.detach())
+        weights = one_hot.detach() + (soft_w - soft_w.detach())  # STE
 
         if op == "write":
             if values is None:
@@ -112,6 +131,7 @@ class SWSTMCore(nn.Module):
         return torch.matmul(weights, self.memory)
 
     def read_exact(self, keys: torch.Tensor) -> torch.Tensor:
+        """Hard assignment read (no STE, no gradients)."""
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
@@ -120,6 +140,7 @@ class SWSTMCore(nn.Module):
         return torch.matmul(one_hot, self.memory)
 
     def margin_loss(self, keys: torch.Tensor, margin: float = 0.2) -> torch.Tensor:
+        """Repulsive loss: push top-2 prototypes apart."""
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
@@ -127,12 +148,16 @@ class SWSTMCore(nn.Module):
         return torch.mean(F.relu(margin - (top2[:, 0] - top2[:, 1])))
 
     def init_prototypes_from_keys(self, keys: torch.Tensor):
+        """Initialize prototypes via k-means on key embeddings."""
         from sklearn.cluster import KMeans
+
         keys_np = keys.detach().cpu().numpy()
         n_clusters = min(self.num_slots, keys_np.shape[0])
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
         kmeans.fit(keys_np)
-        centroids = torch.tensor(kmeans.cluster_centers_, dtype=keys.dtype, device=keys.device)
+        centroids = torch.tensor(
+            kmeans.cluster_centers_, dtype=keys.dtype, device=keys.device
+        )
         self.prototype.data[:n_clusters] = centroids[:n_clusters]
 
     def get_state(self) -> Dict[str, Any]:
@@ -165,6 +190,7 @@ class SWSTMEngine:
     SWSTM-only memory engine.
     Neural retrieval ONLY (no dict fallback).
     """
+
     def __init__(
         self,
         num_slots: int = 2000,
@@ -174,7 +200,9 @@ class SWSTMEngine:
         encoder_model: str = "all-MiniLM-L6-v2",
         device: Optional[torch.device] = None,
     ):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
         self.key_dim = key_dim
         self.slot_dim = slot_dim
         self.encoder = SentenceTransformer(encoder_model)
@@ -186,9 +214,12 @@ class SWSTMEngine:
             temperature=temperature,
         ).to(self.device)
 
+        # Slot -> string value mapping
         self.slot_to_value: Dict[int, str] = {}
         self.value_to_slot: Dict[str, int] = {}
-        self._train_buffer: List[Tuple[torch.Tensor, torch.Tensor, str]] = []
+
+        # Training buffer
+        self._train_buffer: List[tuple] = []
         self._prototypes_initialized = False
 
     def _encode(self, text: str) -> torch.Tensor:
@@ -198,6 +229,7 @@ class SWSTMEngine:
         return F.normalize(vec.to(self.device), dim=-1)
 
     def add(self, key: str, value: str) -> int:
+        """Write a key-value pair into SWSTM. Returns slot index."""
         key_vec = self._encode(key)
         val_vec = self._encode(value)
 
@@ -210,19 +242,26 @@ class SWSTMEngine:
         return slot_idx
 
     def get(self, key: str, top_k: int = 1) -> List[str]:
+        """Neural retrieval. No dict fallback."""
         key_vec = self._encode(key)
 
         with torch.no_grad():
             keys_norm = F.normalize(key_vec, dim=-1)
             proto_norm = F.normalize(self.model.prototype, dim=-1)
-            sims = torch.matmul(keys_norm, proto_norm.T) + self.model.self_token.unsqueeze(0)
-
-            occupied_mask = self.model.slot_occupied.unsqueeze(0)
-            sims = sims.masked_fill(~occupied_mask, float('-inf'))
-
-            top_scores, top_indices = torch.topk(
-                sims, min(top_k, occupied_mask.sum().item()), dim=-1
+            sims = (
+                torch.matmul(keys_norm, proto_norm.T)
+                + self.model.self_token.unsqueeze(0)
             )
+
+            # Mask unoccupied slots
+            occupied_mask = self.model.slot_occupied.unsqueeze(0)
+            sims = sims.masked_fill(~occupied_mask, float("-inf"))
+
+            k = min(top_k, int(occupied_mask.sum().item()))
+            if k == 0:
+                return []
+
+            top_scores, top_indices = torch.topk(sims, k, dim=-1)
 
         results = []
         for idx in top_indices.squeeze(0).tolist():
@@ -231,6 +270,7 @@ class SWSTMEngine:
         return results
 
     def train(self, epochs: int = 50, lr: float = 0.01, margin: float = 0.2):
+        """Train prototypes to separate keys into distinct slots."""
         if len(self._train_buffer) < 2:
             print("[SWSTM] Not enough data to train.")
             return
@@ -238,7 +278,9 @@ class SWSTMEngine:
         keys = torch.stack([k for k, _, _ in self._train_buffer])
 
         if not self._prototypes_initialized:
-            print(f"[SWSTM] Initializing {self.model.num_slots} prototypes from {len(keys)} keys...")
+            print(
+                f"[SWSTM] Initializing {self.model.num_slots} prototypes from {len(keys)} keys..."
+            )
             self.model.init_prototypes_from_keys(keys)
             self._prototypes_initialized = True
 
@@ -265,11 +307,16 @@ class SWSTMEngine:
             loss.backward()
             optimizer.step()
             if (epoch + 1) % 10 == 0:
-                print(f"  Epoch {epoch+1}/{epochs}, margin_loss={loss.item():.4f}")
+                print(
+                    f"  Epoch {epoch+1}/{epochs}, margin_loss={loss.item():.4f}"
+                )
 
         print("[SWSTM] Training complete.")
 
-    def exact_match_accuracy(self, test_keys: List[str], test_values: List[str]) -> float:
+    def exact_match_accuracy(
+        self, test_keys: List[str], test_values: List[str]
+    ) -> float:
+        """Benchmark: exact key lookup."""
         if not test_keys:
             return 0.0
         correct = 0
@@ -279,7 +326,10 @@ class SWSTMEngine:
                 correct += 1
         return correct / len(test_keys)
 
-    def paraphrase_accuracy(self, paraphrase_keys: List[str], expected_values: List[str]) -> float:
+    def paraphrase_accuracy(
+        self, paraphrase_keys: List[str], expected_values: List[str]
+    ) -> float:
+        """Benchmark: paraphrase lookup."""
         if not paraphrase_keys:
             return 0.0
         correct = 0
@@ -290,8 +340,10 @@ class SWSTMEngine:
         return correct / len(paraphrase_keys)
 
     def save(self, path: Union[str, Path]):
+        """Save full engine state."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+
         state = {
             "model": self.model.get_state(),
             "slot_to_value": self.slot_to_value,
@@ -303,6 +355,7 @@ class SWSTMEngine:
         print(f"[SWSTM] Saved to {path}")
 
     def load(self, path: Union[str, Path]):
+        """Load full engine state."""
         state = torch.load(path, map_location=self.device)
         self.model.set_state(state["model"])
         self.slot_to_value = state["slot_to_value"]
@@ -317,6 +370,14 @@ class SWSTMEngine:
 # ================================================================
 
 class HybridEngine:
+    """
+    Dual-core memory:
+    - ExactMemory: deterministic, tamper-evident, audit trail
+    - SWSTMEngine: neural, paraphrase-capable
+
+    Writes go to BOTH. Reads try Exact first, then SWSTM.
+    """
+
     def __init__(self, **swstm_kwargs):
         self.exact = ExactMemory()
         self.swstm = SWSTMEngine(**swstm_kwargs)
@@ -326,9 +387,11 @@ class HybridEngine:
         self.swstm.add(key, value)
 
     def get(self, key: str, top_k: int = 1) -> List[str]:
+        # 1. Exact match
         result = self.exact.get(key)
         if result is not None:
             return [result]
+        # 2. Neural fallback
         return self.swstm.get(key, top_k=top_k)
 
     def train(self, epochs: int = 50, lr: float = 0.01):
