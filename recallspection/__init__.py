@@ -1,23 +1,36 @@
 """
-Recallspection – Dual‑core exact memory for AI agents.
+recallspection – Neural Exact Memory (SWSTM v7.0.3)
 """
 
-__version__ = "18.0.0"
-
-from .exact import ExactMemory
 from .swstm import (
+    # Core neural memory classes
+    SWSTMExtraTrainable,
+    HierarchicalSwSTM,
+    ProductQuantizedSWSTM,
+    # High‑level engine for easy string‑based usage
+    SWSTMEngine,
+    # Training and benchmarking
+    train_swstm,
+    run_benchmark,
+    benchmark_neural_accuracy,
+    # Backward‑compatibility aliases
     FlatSWSTM,
     HierarchicalSWSTM,
-    PQEncoder,
     PQSWSTM,
-    SWSTMEngine,
+    PQEncoder,
 )
 
+__version__ = "7.0.4"
 __all__ = [
-    "ExactMemory",
+    "SWSTMExtraTrainable",
+    "HierarchicalSwSTM",
+    "ProductQuantizedSWSTM",
+    "SWSTMEngine",
+    "train_swstm",
+    "run_benchmark",
+    "benchmark_neural_accuracy",
     "FlatSWSTM",
     "HierarchicalSWSTM",
-    "PQEncoder",
     "PQSWSTM",
-    "SWSTMEngine",
+    "PQEncoder",
 ]
