@@ -12,18 +12,33 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.9", "3.10", "3.11"]
-
     steps:
     - uses: actions/checkout@v4
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -e .[dev]
-        pip install pytest pytest-cov numpy
-    - name: Run tests
+        pip install pytest pytest-cov numpy sentence-transformers scikit-learn torch
+
+    - name: Cache Hugging Face models
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-${{ runner.os }}-${{ matrix.python-version }}-all-MiniLM-L6-v2
+        restore-keys: |
+          hf-${{ runner.os }}-${{ matrix.python-version }}-all-MiniLM-L6-v2
+          hf-${{ runner.os }}-${{ matrix.python-version }}-
+
+    - name: Pre-download sentence-transformers model
       run: |
-        pytest tests/ -v
+        python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+    - name: Test with pytest
+      run: |
+        pytest tests/ -v --cov=recallspection
