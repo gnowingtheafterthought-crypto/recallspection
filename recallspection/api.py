@@ -117,8 +117,8 @@ def get_swstm():
     global swstm
     if swstm is None:
         from recallspection.swstm import SWSTMEngine
-        swstm = SWSTMEngine(mode=SWSTM_MODE, flat_num_slots=200)
-        logger.info(f"SWSTMEngine initialized (mode={SWSTM_MODE})")
+        swstm = SWSTMEngine(num_slots=2000, key_dim=384, slot_dim=384)
+        logger.info("SWSTMEngine initialized")
     return swstm
 
 # -----------------------------------------------------------------------------
