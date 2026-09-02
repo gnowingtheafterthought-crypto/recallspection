@@ -1,109 +1,58 @@
 import pytest
-import torch
-from recallspection.swstm import (
-    FlatSWSTM,
-    HierarchicalSWSTM,
-    SWSTMEngine,
-)
-from recallspection.exact import ExactMemory
-from sentence_transformers import SentenceTransformer
+from recallspection.swstm import SWSTMEngine, ExactMemory, HybridEngine
 
-def generate_facts(n: int, prefix: str = "fact"):
-    keys = [f"{prefix}_{i}" for i in range(n)]
-    values = [f"value_{i}" for i in range(n)]
-    return keys, values
-
-# -----------------------------------------------------------------------------
-# Flat SWSTM – use 1000 slots so no training needed
-# -----------------------------------------------------------------------------
-def test_flat_swtm_100_facts():
-    keys, values = generate_facts(100)
-    engine = SWSTMEngine(mode="flat", flat_num_slots=1000)
-    for k, v in zip(keys, values):
-        engine.add(k, v)
-    acc = engine.exact_match_accuracy(keys, values)
-    print(f"Flat 100 facts accuracy: {acc*100:.2f}%")
-    # With 10x slots and self-token=1, retrieval is guaranteed.
-    assert acc >= 0.99
-
-# -----------------------------------------------------------------------------
-# Training test – skip for CI (research-level)
-# -----------------------------------------------------------------------------
-@pytest.mark.skip(reason="Training requires careful autograd handling; skip for CI")
-def test_flat_swtm_training():
-    keys, values = generate_facts(100)
-    model = FlatSWSTM(num_slots=200, key_dim=384, val_dim=384)
-    encoder = SentenceTransformer('all-MiniLM-L6-v2')
-    key_vecs = torch.stack([encoder.encode(k, convert_to_tensor=True) for k in keys])
-    val_vecs = key_vecs
-    for k, v in zip(key_vecs, values):
-        model.add(k, v)
-    model.train_epoch(key_vecs, val_vecs, epochs=50, lr=0.001)
-    acc = model.exact_match_accuracy(key_vecs, values)
-    assert acc >= 0.97
-
-# -----------------------------------------------------------------------------
-# Hierarchical SWSTM – 5000 facts, 10 clusters
-# -----------------------------------------------------------------------------
-def test_hierarchical_swtm_5000_facts():
-    keys, values = generate_facts(5000, prefix="big")
-    engine = SWSTMEngine(
-        mode="hierarchical",
-        hierarchical_num_clusters=10,
-        hierarchical_slots_per_expert=1000,
-    )
-    for k, v in zip(keys, values):
-        engine.add(k, v)
-    engine.fit_router()
-    sample_keys = keys[:1000]
-    sample_values = values[:1000]
-    acc = engine.exact_match_accuracy(sample_keys, sample_values)
-    print(f"Hierarchical 5k facts (sample 1k) accuracy: {acc*100:.2f}%")
-    assert acc >= 0.99
-
-# -----------------------------------------------------------------------------
-# Engine API compatibility
-# -----------------------------------------------------------------------------
-def test_engine_api_compatibility():
-    engine = SWSTMEngine(mode="flat", flat_num_slots=200)
-    engine.add("test_key", "test_value")
-    result = engine.get("test_key", top_k=1)
-    assert result == ["test_value"]
-    engine.add("capital of France", "Paris")
-    result = engine.get("France's capital", top_k=1)
-    assert result == ["Paris"]
-    assert engine.fact_count == 2
-
-# -----------------------------------------------------------------------------
-# Auto-switch – skip (not fully implemented yet)
-# -----------------------------------------------------------------------------
-@pytest.mark.skip(reason="Auto-switch requires engine re-initialization; test separately")
-def test_auto_mode_switch():
-    engine = SWSTMEngine(
-        mode="auto",
-        auto_threshold_flat=10,
-        hierarchical_num_clusters=5,
-        hierarchical_slots_per_expert=20,
-    )
-    keys, values = generate_facts(15)
-    for k, v in zip(keys, values):
-        engine.add(k, v)
-    assert isinstance(engine.memory, HierarchicalSWSTM)
-    acc = engine.exact_match_accuracy(keys, values)
-    assert acc >= 0.9
-
-# -----------------------------------------------------------------------------
-# ExactMemory tamper test
-# -----------------------------------------------------------------------------
-def test_exact_memory():
+def test_exact_memory_tamper():
     exact = ExactMemory()
-    exact.add("test_key", "test_value")
-    result = exact.get("test_key")
-    assert result == "test_value"
-    key_digest = exact._hash_key("test_key")
-    exact._storage[key_digest] = b"TAMPERED"
-    result = exact.get("test_key")
-    assert result is None
+    exact.add("key", "value")
+    assert exact.get("key") == "value"
+    # Tamper
+    digest = exact._hash_key("key")
+    exact._storage[digest] = b"TAMPERED"
+    assert exact.get("key") is None
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+def test_swstm_exact_100_facts():
+    engine = SWSTMEngine(num_slots=2000, key_dim=384, slot_dim=384)
+    facts = [(f"fact_{i}", f"value_{i}") for i in range(100)]
+    for k, v in facts:
+        engine.add(k, v)
+    engine.train(epochs=50, lr=0.01, margin=0.2)
+    acc = engine.exact_match_accuracy([k for k, _ in facts], [v for _, v in facts])
+    assert acc == 1.0
+
+def test_swstm_paraphrase():
+    engine = SWSTMEngine(num_slots=500, key_dim=384, slot_dim=384)
+    facts = [
+        ("capital of France", "Paris"),
+        ("capital of Germany", "Berlin"),
+        ("largest planet", "Jupiter"),
+        ("author of 1984", "George Orwell"),
+        ("speed of light", "299792458 m/s"),
+    ]
+    paraphrases = [
+        ("France's capital", "Paris"),
+        ("capital city of Germany", "Berlin"),
+        ("biggest planet", "Jupiter"),
+        ("who wrote 1984", "George Orwell"),
+        ("how fast does light travel", "299792458 m/s"),
+    ]
+    for k, v in facts:
+        engine.add(k, v)
+    engine.train(epochs=100, lr=0.005, margin=0.3)
+    acc = engine.paraphrase_accuracy([k for k, _ in paraphrases], [v for _, v in paraphrases])
+    print(f"Paraphrase accuracy: {acc*100:.1f}%")
+    assert acc >= 0.85
+
+def test_swstm_save_load():
+    engine = SWSTMEngine(num_slots=500, key_dim=384, slot_dim=384)
+    engine.add("test", "value")
+    engine.train(epochs=10, lr=0.01)
+    engine.save("/tmp/swstm_test.pt")
+    
+    engine2 = SWSTMEngine(num_slots=500, key_dim=384, slot_dim=384)
+    engine2.load("/tmp/swstm_test.pt")
+    assert engine2.get("test") == ["value"]
+
+def test_hybrid_engine():
+    hybrid = HybridEngine(num_slots=500, key_dim=384, slot_dim=384)
+    hybrid.add("exact_key", "exact_value")
+    assert hybrid.get("exact_key") == ["exact_value"]
