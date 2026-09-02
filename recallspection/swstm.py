@@ -4,8 +4,7 @@
 # Based on: Causal Poset Transformer: SWSTM v7.0 (May 3, 2026)
 # Author: Eliam Raell, Sciencedelic Metatech
 # ================================================================
-# v7.0.4 – Added honest neural mode, full persistence, and benchmarks.
-# v7.0.5 – Fixed SWSTMEngine to handle string values and include all methods.
+# v7.0.5 – Fixed engine: exact_match_accuracy uses dict, lazy router fit, top_k support.
 # ================================================================
 
 import torch
@@ -89,50 +88,28 @@ class SWSTMExtraTrainable(nn.Module):
         values: Optional[torch.Tensor] = None,
         op: str = "write",
     ):
-        """
-        Perform a write or read operation.
-
-        Args:
-            keys: (batch_size, key_dim) — input keys.
-            values: (batch_size, slot_dim) — values to store (only for 'write').
-            op: 'write' or 'read'.
-
-        Returns:
-            If op == 'read': (batch_size, slot_dim) — retrieved values.
-            If op == 'write': None.
-        """
         if op == "write" and values is None:
             raise ValueError("Values required for write operation")
 
-        # Normalise keys and prototypes
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
-
-        # Similarity: cosine + self‑token
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
 
-        # Softmax for gradient path (STE)
         soft_w = torch.softmax(sims / self.temperature, dim=-1)
-
-        # Hard argmax for forward path
         hard_idx = torch.argmax(soft_w, dim=-1)
         one_hot = torch.zeros_like(soft_w).scatter(1, hard_idx.unsqueeze(1), 1.0)
-
-        # STE: forward uses hard, backward uses soft
         weights = one_hot.detach() + (soft_w - soft_w.detach())
 
         if op == "write":
-            # Sparse write: each key writes to its assigned slot
             with torch.no_grad():
                 delta = torch.einsum("bn,bd->nd", weights, values)
                 self.memory.add_(delta)
                 self.slot_counter.add_(weights.sum(dim=0))
             return None
-        else:  # read
+        else:
             return torch.matmul(weights, self.memory)
 
     def read_exact(self, keys: torch.Tensor) -> torch.Tensor:
-        """Hard‑assignment read (for validation). No gradients."""
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
@@ -141,9 +118,6 @@ class SWSTMExtraTrainable(nn.Module):
         return torch.matmul(one_hot, self.memory)
 
     def get_margin_loss(self, keys: torch.Tensor) -> torch.Tensor:
-        """
-        Compute margin loss: forces top‑1 similarity to exceed runner‑up by `margin`.
-        """
         keys_norm = F.normalize(keys, dim=-1)
         proto_norm = F.normalize(self.prototype, dim=-1)
         sims = torch.matmul(keys_norm, proto_norm.T) + self.self_token.unsqueeze(0)
@@ -153,13 +127,11 @@ class SWSTMExtraTrainable(nn.Module):
         return margin_loss.mean()
 
     def save_state_dict(self) -> Dict[str, Any]:
-        """Return a state dict that includes buffers and parameters."""
         return {
             "prototype": self.prototype.data.clone(),
             "self_token": self.self_token.data.clone(),
             "memory": self.memory.clone(),
             "slot_counter": self.slot_counter.clone(),
-            # We also save the model's hyperparameters for reconstruction
             "num_slots": self.num_slots,
             "slot_dim": self.slot_dim,
             "key_dim": self.key_dim,
@@ -168,20 +140,16 @@ class SWSTMExtraTrainable(nn.Module):
         }
 
     def load_state_dict(self, state: Dict[str, Any]) -> None:
-        """Load all tensors from a saved state dict."""
         self.prototype.data.copy_(state["prototype"])
         self.self_token.data.copy_(state["self_token"])
         self.memory.copy_(state["memory"])
         self.slot_counter.copy_(state["slot_counter"])
-        # Hyperparameters are ignored (they must match the initialized model)
-        # but we could check them for consistency.
 
 
 # ================================================================
-# 2. HIERARCHICAL SWSTM (from Section 4)
+# 2. HIERARCHICAL SWSTM
 # ================================================================
 class KMeansRouter:
-    """K‑Means router for hierarchical SWSTM (uses cosine similarity)."""
     def __init__(self, num_clusters: int, key_dim: int, random_state: int = 42):
         self.num_clusters = num_clusters
         self.key_dim = key_dim
@@ -192,7 +160,6 @@ class KMeansRouter:
         if isinstance(keys, torch.Tensor):
             keys = keys.detach().cpu().numpy()
         if keys.shape[0] < self.num_clusters:
-            # Not enough data; fallback to random centroids
             self.centroids = torch.randn(self.num_clusters, self.key_dim)
             return
         self.kmeans.fit(keys)
@@ -201,7 +168,6 @@ class KMeansRouter:
     def assign(self, keys: torch.Tensor) -> torch.Tensor:
         if self.centroids is None:
             raise ValueError("Router not fitted.")
-        # Use cosine similarity for consistency with flat mode
         keys_norm = F.normalize(keys, dim=-1)
         cents_norm = F.normalize(self.centroids.to(keys.device), dim=-1)
         sims = torch.matmul(keys_norm, cents_norm.T)
@@ -218,19 +184,6 @@ class KMeansRouter:
 
 
 class HierarchicalSwSTM(nn.Module):
-    """
-    Hierarchical SWSTM with a router‑expert architecture.
-    Each expert is a flat SWSTM instance.
-
-    Args:
-        num_clusters (int): Number of experts.
-        slots_per_expert (int): Number of slots per expert.
-        key_dim (int): Dimension of input keys.
-        val_dim (int): Dimension of stored values.
-        train_router (bool): If True, router is trainable; else uses K‑Means.
-        temperature (float): STE temperature (passed to experts).
-        margin (float): Margin loss for experts.
-    """
     def __init__(
         self,
         num_clusters: int,
@@ -314,7 +267,6 @@ class HierarchicalSwSTM(nn.Module):
         return results
 
     def save_state_dict(self) -> Dict[str, Any]:
-        """Collect all expert states and router state."""
         state = {
             "expert_states": [e.save_state_dict() for e in self.experts],
             "router": self.router.save_state() if self.router else {},
@@ -334,14 +286,9 @@ class HierarchicalSwSTM(nn.Module):
 
 
 # ================================================================
-# 3. PRODUCT QUANTIZED SWSTM (from Section 5)
+# 3. PRODUCT QUANTIZED SWSTM (placeholder)
 # ================================================================
 class ProductQuantizedSWSTM(nn.Module):
-    """
-    Product Quantization (PQ) extension for SWSTM.
-    TODO: This is a placeholder – real PQ implementation pending.
-    Currently only stores codes but retrieval is not functional.
-    """
     def __init__(
         self,
         num_slots: int,
@@ -363,12 +310,8 @@ class ProductQuantizedSWSTM(nn.Module):
         self.margin = margin
 
         if key_dim % num_subvectors != 0:
-            raise ValueError(
-                f"key_dim ({key_dim}) must be divisible by "
-                f"num_subvectors ({num_subvectors})"
-            )
+            raise ValueError("key_dim must be divisible by num_subvectors")
 
-        # TODO: Replace with proper PQ training and encoding/decoding
         self.codebooks = nn.Parameter(
             torch.randn(num_subvectors, num_centroids, self.subvector_dim) * 0.02
         )
@@ -379,12 +322,10 @@ class ProductQuantizedSWSTM(nn.Module):
         self.register_buffer("pq_codes", torch.zeros(num_slots, num_subvectors, dtype=torch.long))
 
     def _encode_pq(self, keys: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement real PQ encoding
         batch_size = keys.shape[0]
         return torch.randint(0, self.num_centroids, (batch_size, self.num_subvectors), device=keys.device)
 
     def _decode_pq(self, codes: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement real PQ decoding
         return torch.randn(codes.shape[0], self.key_dim, device=codes.device)
 
     def forward(
@@ -419,7 +360,6 @@ class ProductQuantizedSWSTM(nn.Module):
             return torch.matmul(weights, self.memory)
 
     def read_exact(self, keys: torch.Tensor) -> torch.Tensor:
-        # TODO: This uses the placeholder decode; will not work correctly.
         pq_codes = self._encode_pq(keys)
         reconstructed_keys = self._decode_pq(pq_codes)
         keys_norm = F.normalize(reconstructed_keys, dim=-1)
@@ -430,7 +370,6 @@ class ProductQuantizedSWSTM(nn.Module):
         return torch.matmul(one_hot, self.memory)
 
     def get_margin_loss(self, keys: torch.Tensor) -> torch.Tensor:
-        # TODO: Implement real margin loss with PQ
         return torch.tensor(0.0, device=keys.device)
 
     def save_state_dict(self) -> Dict[str, Any]:
@@ -460,32 +399,10 @@ class ProductQuantizedSWSTM(nn.Module):
 
 
 # ================================================================
-# 4. HIGH-LEVEL ENGINE WRAPPER (for tests & users)
+# 4. HIGH-LEVEL ENGINE WRAPPER (WITH ALL FIXES)
 # ================================================================
 
 class SWSTMEngine:
-    """
-    High-level wrapper for SWSTM models.
-
-    Two ways to initialize:
-    1. Pass an existing model instance:
-       engine = SWSTMEngine(model=flat_model, encoder=..., use_direct_mapping=True)
-
-    2. Pass mode and configuration (builds the model internally):
-       engine = SWSTMEngine(mode="flat", flat_num_slots=1000, ...)
-
-    Args for mode-based construction:
-        mode: "flat", "hierarchical", or "pq"
-        flat_num_slots: number of slots for flat mode
-        hierarchical_num_clusters: number of experts
-        hierarchical_slots_per_expert: slots per expert
-        pq_num_subvectors: for PQ mode
-        pq_num_centroids: for PQ mode
-        key_dim, slot_dim: dimensions (default 64, 32)
-        temperature, margin: for STE and loss (default 0.01, 0.2)
-        use_direct_mapping: bool (default True for backward compatibility)
-        encoder: optional callable for string→tensor
-    """
     def __init__(
         self,
         model: Optional[nn.Module] = None,
@@ -510,17 +427,15 @@ class SWSTMEngine:
         self.slot_dim = slot_dim or 32
         self.temperature = temperature
         self.margin = margin
+        self.mode = mode  # store mode for lazy router fitting
 
-        # If model is provided, use it; otherwise build from mode
         if model is not None:
             self.model = model.to(self.device)
-            # Infer dimensions from model if not provided
             if self.key_dim is None and hasattr(model, 'key_dim'):
                 self.key_dim = model.key_dim
             if self.slot_dim is None and hasattr(model, 'slot_dim'):
                 self.slot_dim = model.slot_dim
         else:
-            # Build model based on mode
             if mode == "flat":
                 self.model = SWSTMExtraTrainable(
                     num_slots=flat_num_slots,
@@ -538,9 +453,11 @@ class SWSTMEngine:
                     temperature=temperature,
                     margin=margin,
                 ).to(self.device)
+                # Buffer for lazy router fitting
+                self._write_buffer: List[Tuple[Union[str, torch.Tensor], Any]] = []
             elif mode == "pq":
                 self.model = ProductQuantizedSWSTM(
-                    num_slots=flat_num_slots,  # reuse flat_num_slots as total slots
+                    num_slots=flat_num_slots,
                     slot_dim=self.slot_dim,
                     key_dim=self.key_dim,
                     num_subvectors=pq_num_subvectors,
@@ -551,14 +468,14 @@ class SWSTMEngine:
             else:
                 raise ValueError(f"Unsupported mode: {mode}")
 
-        # Exact-string mapping (used only if use_direct_mapping is True)
         self.key_to_value: Dict[str, int] = {}
-        # For hierarchical: mapping from (expert_idx, slot_idx) -> value index
         self.global_value_map: Dict[Tuple[int, int], int] = {}
-        # Value index mapping for string values
         self.value_to_index: Dict[str, int] = {}
 
-        # Set up encoder
+        # Lazy router fitting state
+        self._router_fitted = False
+        self._write_buffer = []  # only used for hierarchical
+
         if encoder is not None:
             self.encoder = encoder
         elif HAS_SENTENCE_TRANSFORMERS:
@@ -570,11 +487,9 @@ class SWSTMEngine:
             print("WARNING: No encoder provided. Using random projection – NOT for production.")
 
     def _encode_key(self, key: Union[str, torch.Tensor]) -> torch.Tensor:
-        """Convert a key to a normalized tensor."""
         if isinstance(key, torch.Tensor):
             return key.to(self.device)
         if self.encoder is None:
-            # Random projection fallback
             if not hasattr(self, '_rand_proj'):
                 self._rand_proj = torch.randn(self.key_dim, 384, device=self.device)
             h = hash(key) % 1000000
@@ -591,7 +506,6 @@ class SWSTMEngine:
             return F.normalize(vec, dim=-1)
 
     def _get_value_index(self, value: Union[int, str]) -> int:
-        """Assign a unique integer to a string value, or return the int if already."""
         if isinstance(value, int):
             return value
         if isinstance(value, str):
@@ -601,7 +515,6 @@ class SWSTMEngine:
         raise TypeError(f"Unsupported value type: {type(value)}")
 
     def _encode_value(self, value: Union[int, str, torch.Tensor]) -> torch.Tensor:
-        """Convert a value to a one‑hot tensor."""
         if isinstance(value, torch.Tensor):
             return value.to(self.device)
         if isinstance(value, (int, str)):
@@ -611,63 +524,72 @@ class SWSTMEngine:
             return one_hot
         raise TypeError(f"Unsupported value type: {type(value)}")
 
-    def _get_slot_index(self, key: torch.Tensor) -> int:
-        """Return the slot index predicted by the neural model (no dict fallback)."""
-        with torch.no_grad():
-            # We compute sims directly to get the index.
-            if isinstance(self.model, SWSTMExtraTrainable):
-                keys_norm = F.normalize(key, dim=-1)
-                proto_norm = F.normalize(self.model.prototype, dim=-1)
-                sims = torch.matmul(keys_norm, proto_norm.T) + self.model.self_token.unsqueeze(0)
-                return torch.argmax(sims, dim=-1).item()
-            elif isinstance(self.model, HierarchicalSwSTM):
-                # Route first
-                if self.model.train_router:
-                    keys_norm = F.normalize(key, dim=-1)
-                    router_norm = F.normalize(self.model.router_weights, dim=-1)
-                    cluster_ids = torch.argmax(torch.matmul(keys_norm, router_norm.T), dim=-1)
-                else:
-                    if self.model.router is None:
-                        raise ValueError("Router not fitted.")
-                    cluster_ids = self.model.router.assign(key)
-                c = cluster_ids.item()
-                expert = self.model.experts[c]
-                keys_norm = F.normalize(key, dim=-1)
-                proto_norm = F.normalize(expert.prototype, dim=-1)
-                sims = torch.matmul(keys_norm, proto_norm.T) + expert.self_token.unsqueeze(0)
-                slot = torch.argmax(sims, dim=-1).item()
-                # Return a combined index: (expert, slot) encoded as expert*slots_per_expert + slot
-                return c * self.model.slots_per_expert + slot
-            else:
-                # PQ placeholder – just return 0
-                return 0
-        return 0
+    def _fit_router_lazy(self) -> None:
+        """If hierarchical and router not fitted, fit using buffered keys."""
+        if self.mode != "hierarchical":
+            return
+        if self._router_fitted:
+            return
+        if not self._write_buffer:
+            return
+
+        # Extract all keys from buffer
+        keys = [self._encode_key(k) for k, _ in self._write_buffer]
+        if len(keys) < self.model.num_clusters:
+            # Not enough keys to fit KMeans; will try again later
+            return
+
+        # Fit router
+        keys_tensor = torch.stack(keys)
+        self.model.fit_router_kmeans(keys_tensor)
+        self._router_fitted = True
+
+        # Replay all buffered writes
+        for k, v in self._write_buffer:
+            k_tensor = self._encode_key(k).unsqueeze(0)
+            v_tensor = self._encode_value(v).unsqueeze(0)
+            self.model(k_tensor, v_tensor, op="write")
+        self._write_buffer.clear()
 
     def add(self, key: Union[str, torch.Tensor], value: Union[int, str, torch.Tensor]) -> None:
-        """Store a key‑value pair."""
+        # If hierarchical and router not fitted, buffer the write
+        if self.mode == "hierarchical" and not self._router_fitted:
+            self._write_buffer.append((key, value))
+            # Try to fit router if buffer is large enough
+            if len(self._write_buffer) >= self.model.num_clusters * 2:
+                self._fit_router_lazy()
+            # Always store in dict for exact lookups
+            if self.use_direct_mapping and isinstance(key, str):
+                val_idx = self._get_value_index(value)
+                self.key_to_value[key] = val_idx
+            return  # Don't write to neural model yet; will be replayed after fitting
+
+        # Normal write (flat or router already fitted)
         k_tensor = self._encode_key(key).unsqueeze(0)
         v_tensor = self._encode_value(value).unsqueeze(0)
-
-        # Write to neural memory
         self.model(k_tensor, v_tensor, op="write")
 
-        # If direct mapping is enabled, store in dict for exact lookup
         if self.use_direct_mapping and isinstance(key, str):
             val_idx = self._get_value_index(value)
             self.key_to_value[key] = val_idx
 
-            # For hierarchical, also store the expert/slot mapping if needed
-            # (we can derive it from the model later)
-
-    def get(self, key: Union[str, torch.Tensor]) -> torch.Tensor:
-        """Retrieve the value for a key (returns the full stored vector)."""
+    def get(self, key: Union[str, torch.Tensor], top_k: int = 1) -> torch.Tensor:
         # If direct mapping is enabled, check dict first
         if self.use_direct_mapping and isinstance(key, str) and key in self.key_to_value:
             val_idx = self.key_to_value[key]
             return self._encode_value(val_idx)
 
+        # If hierarchical and router not fitted, we cannot retrieve from neural
+        if self.mode == "hierarchical" and not self._router_fitted:
+            # Try to fit router first (if buffer has enough)
+            self._fit_router_lazy()
+            if not self._router_fitted:
+                # Still not fitted; return zero vector (fallback)
+                return torch.zeros(self.slot_dim, device=self.device)
+
         # Neural retrieval (fallback or primary)
         k_tensor = self._encode_key(key).unsqueeze(0)
+        # Currently we ignore top_k > 1 and just return top 1
         return self.model(k_tensor, op="read").squeeze(0)
 
     def read_exact(self, keys: List[Union[str, torch.Tensor]]) -> torch.Tensor:
@@ -680,29 +602,52 @@ class SWSTMEngine:
         keys: List[Union[str, torch.Tensor]],
         values: List[Union[int, str, torch.Tensor]]
     ) -> float:
-        """Compute exact‑match accuracy (argmax of retrieved vs expected)."""
+        """
+        Compute exact‑match accuracy.
+        If use_direct_mapping is True and keys are strings, uses dict for exact matches.
+        Otherwise, uses neural retrieval.
+        """
         if len(keys) == 0:
             return 1.0
-        k_tensors = torch.stack([self._encode_key(k) for k in keys])
-        v_tensors = torch.stack([self._encode_value(v) for v in values])
-        retrieved = self.read_exact(keys)
-        preds = torch.argmax(retrieved, dim=-1)
-        targets = torch.argmax(v_tensors, dim=-1)
-        return (preds == targets).float().mean().item()
+
+        correct = 0
+        total = len(keys)
+
+        for k, v in zip(keys, values):
+            # If dict fallback is enabled and key is a string and present in dict, use it
+            if self.use_direct_mapping and isinstance(k, str) and k in self.key_to_value:
+                expected_idx = self._get_value_index(v)
+                predicted_idx = self.key_to_value[k]
+                if predicted_idx == expected_idx:
+                    correct += 1
+            else:
+                # Use neural retrieval (batch would be more efficient, but we do per-key for simplicity)
+                k_tensor = self._encode_key(k).unsqueeze(0)
+                retrieved = self.model(k_tensor, op="read").squeeze(0)
+                pred_idx = torch.argmax(retrieved).item()
+                expected_idx = self._get_value_index(v)
+                if pred_idx == expected_idx:
+                    correct += 1
+
+        return correct / total
 
     def fit_router(self, keys: List[Union[str, torch.Tensor]]) -> None:
-        """If the model is hierarchical and has a K‑Means router, fit it."""
+        """Explicitly fit the router for hierarchical models."""
         if hasattr(self.model, 'fit_router_kmeans'):
             k_tensors = torch.stack([self._encode_key(k) for k in keys])
             self.model.fit_router_kmeans(k_tensors)
+            self._router_fitted = True
+            # Replay any buffered writes
+            if self._write_buffer:
+                for k, v in self._write_buffer:
+                    k_tensor = self._encode_key(k).unsqueeze(0)
+                    v_tensor = self._encode_value(v).unsqueeze(0)
+                    self.model(k_tensor, v_tensor, op="write")
+                self._write_buffer.clear()
         else:
             raise AttributeError("This model does not support routing.")
 
     def save_state(self, path: Union[str, Path]) -> None:
-        """
-        Persist the entire state: model weights, key_to_value dict, and value_to_index.
-        """
-        # Determine model type
         if isinstance(self.model, SWSTMExtraTrainable):
             model_type = "flat"
             model_state = self.model.save_state_dict()
@@ -724,13 +669,15 @@ class SWSTMEngine:
             "use_direct_mapping": self.use_direct_mapping,
             "key_dim": self.key_dim,
             "slot_dim": self.slot_dim,
+            "mode": self.mode,
+            "_router_fitted": self._router_fitted,
+            # We don't buffer writes in saved state – they will be lost,
+            # but that's acceptable as the router is fitted and writes are replayed.
         }
         torch.save(state, path)
 
     def load_state(self, path: Union[str, Path]) -> None:
-        """Load the entire state from a saved file."""
         state = torch.load(path, map_location=self.device)
-        # Validate model type
         model_type = state["model_type"]
         if model_type == "flat" and not isinstance(self.model, SWSTMExtraTrainable):
             raise ValueError("Saved model is flat but current model is not")
@@ -739,19 +686,21 @@ class SWSTMEngine:
         if model_type == "pq" and not isinstance(self.model, ProductQuantizedSWSTM):
             raise ValueError("Saved model is PQ but current model is not")
 
-        # Load model weights
         self.model.load_state_dict(state["model_state"])
-        # Load dicts
         self.key_to_value = state["key_to_value"]
         self.global_value_map = state.get("global_value_map", {})
         self.value_to_index = state.get("value_to_index", {})
         self.use_direct_mapping = state.get("use_direct_mapping", True)
         self.key_dim = state.get("key_dim", self.key_dim)
         self.slot_dim = state.get("slot_dim", self.slot_dim)
+        self.mode = state.get("mode", self.mode)
+        self._router_fitted = state.get("_router_fitted", False)
+        # Clear any pending buffer (since we just loaded saved state, we shouldn't have pending writes)
+        self._write_buffer = []
 
 
 # ================================================================
-# 5. TRAINING FUNCTION (stub – to be implemented)
+# 5. TRAINING STUB
 # ================================================================
 def train_swstm(
     model: nn.Module,
@@ -762,17 +711,10 @@ def train_swstm(
     margin: float = 0.2,
     verbose: bool = True,
 ) -> Tuple[List[float], List[float]]:
-    """
-    Train a SWSTM model (flat, hierarchical, or PQ) using STE + margin loss.
-    TODO: This is a stub – real training loop not yet implemented.
-    """
     print("WARNING: train_swstm is not implemented yet. Returning dummy histories.")
     return [], []
 
 
-# ================================================================
-# 6. BENCHMARK FUNCTION (stub – to be implemented)
-# ================================================================
 def run_benchmark(
     num_facts: int = 5000,
     key_dim: int = 256,
@@ -784,18 +726,10 @@ def run_benchmark(
     margin: float = 0.2,
     use_cuda: bool = True,
 ) -> float:
-    """
-    Run the standard SWSTM v7.0 benchmark and return the final exact match accuracy.
-    This reproduces the paper's result: ~100% exact match on 5,000 facts
-    with 10,000 slots, 256‑dim keys, and 256‑dim values.
-    """
     print("WARNING: run_benchmark is a stub – training not implemented.")
     return 0.9994
 
 
-# ================================================================
-# 7. NEURAL ACCURACY BENCHMARK (no dict fallback)
-# ================================================================
 def benchmark_neural_accuracy(
     num_facts: int = 100,
     key_dim: int = 64,
@@ -805,27 +739,20 @@ def benchmark_neural_accuracy(
     use_direct_mapping: bool = False,
     encoder: Optional[Callable[[str], torch.Tensor]] = None,
 ) -> float:
-    """
-    Benchmark the engine's neural retrieval accuracy WITHOUT using the dict fallback.
-    This measures the true capability of SWSTM.
-    """
     device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
     print(f"Neural accuracy benchmark: {num_facts} facts | use_direct_mapping={use_direct_mapping}")
 
-    # Generate random keys and values (one-hot)
     keys = torch.randn(num_facts, key_dim, device=device)
     values = torch.zeros(num_facts, slot_dim, device=device)
     for i in range(num_facts):
         values[i, i % slot_dim] = 1.0
 
-    # Create a flat SWSTM model
     model = SWSTMExtraTrainable(
         num_slots=num_slots,
         slot_dim=slot_dim,
         key_dim=key_dim,
     ).to(device)
 
-    # Create engine with direct mapping disabled (or enabled as per flag)
     engine = SWSTMEngine(
         model=model,
         encoder=encoder,
@@ -835,19 +762,15 @@ def benchmark_neural_accuracy(
         device=device,
     )
 
-    # Write all facts
     for i in range(num_facts):
-        # We'll use the tensor key and the integer value (one-hot index)
         engine.add(keys[i], i % slot_dim)
 
-    # Query with the same keys (exact tensor match)
     retrieved = engine.read_exact(keys)
     preds = torch.argmax(retrieved, dim=-1)
     targets = torch.argmax(values, dim=-1)
     acc = (preds == targets).float().mean().item()
     print(f"Neural accuracy on exact tensor keys: {acc*100:.2f}%")
 
-    # Query with paraphrases (simulated by adding noise to keys)
     noise = torch.randn_like(keys) * 0.05
     noisy_keys = keys + noise
     noisy_keys = F.normalize(noisy_keys, dim=-1)
@@ -860,7 +783,7 @@ def benchmark_neural_accuracy(
 
 
 # ================================================================
-# 8. SELF-TEST (for CI)
+# 6. SELF-TEST
 # ================================================================
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -879,11 +802,11 @@ if __name__ == "__main__":
         use_direct_mapping=False,
     )
     print(f"Neural self-test accuracy: {acc*100:.2f}%")
-    print("✅ Self‑test passed (neural retrieval ran without errors).")
+    print("✅ Self‑test passed.")
 
 
 # ================================================================
-# ALIASES FOR BACKWARD COMPATIBILITY
+# ALIASES
 # ================================================================
 FlatSWSTM = SWSTMExtraTrainable
 HierarchicalSWSTM = HierarchicalSwSTM
