@@ -184,151 +184,60 @@ class SWSTMEngine:
     - Training loop included
     - Save/load included
     """
-    def __init__(
-        self,
-        num_slots: int = 2000,
-        key_dim: int = 384,
-        slot_dim: int = 384,
-        temperature: float = 0.01,
-        encoder_model: str = "all-MiniLM-L6-v2",
-        device: Optional[torch.device] = None,
-    ):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.key_dim = key_dim
-        self.slot_dim = slot_dim
-        self.encoder = SentenceTransformer(encoder_model)
+    def# In __init__, replace:
+self._train_keys: List[torch.Tensor] = []
+self._train_slots: List[int] = []
 
-        self.model = SWSTMCore(
-            num_slots=num_slots,
-            slot_dim=slot_dim,
-            key_dim=key_dim,
-            temperature=temperature,
-        ).to(self.device)
+# With:
+self._train_buffer: List[Tuple[torch.Tensor, torch.Tensor, str]] = []
 
-        # Slot -> string value mapping
-        self.slot_to_value: Dict[int, str] = {}
-        self.value_to_slot: Dict[str, int] = {}
+# In add(), replace:
+self._train_keys.append(key_vec.squeeze(0))
+self._train_slots.append(slot_idx)
 
-        # Track which keys were written (for training)
-        self._train_keys: List[torch.Tensor] = []
-        self._train_slots: List[int] = []
+# With:
+self._train_buffer.append((key_vec.squeeze(0), val_vec.squeeze(0), value))
 
-    def _encode(self, text: str) -> torch.Tensor:
-        vec = self.encoder.encode(text, convert_to_tensor=True)
-        if vec.dim() == 1:
-            vec = vec.unsqueeze(0)
-        return F.normalize(vec.to(self.device), dim=-1)
-
-    def add(self, key: str, value: str) -> int:
-        """Write a key-value pair into SWSTM. Returns slot index."""
-        key_vec = self._encode(key)
-        val_vec = self._encode(value)  # embed value into same space
-
-        with torch.no_grad():
-            slot_idx = self.model.forward(key_vec, val_vec, op="write").item()
-
-        self.slot_to_value[slot_idx] = value
-        self.value_to_slot[value] = slot_idx
-        self._train_keys.append(key_vec.squeeze(0))
-        self._train_slots.append(slot_idx)
-        return slot_idx
-
-    def get(self, key: str, top_k: int = 1) -> List[str]:
-        """Neural retrieval. No dict fallback."""
-        key_vec = self._encode(key)
-
-        with torch.no_grad():
-            # Get similarities to all prototypes
-            keys_norm = F.normalize(key_vec, dim=-1)
-            proto_norm = F.normalize(self.model.prototype, dim=-1)
-            sims = torch.matmul(keys_norm, proto_norm.T) + self.model.self_token.unsqueeze(0)
-
-            # Mask unoccupied slots
-            occupied_mask = self.model.slot_occupied.unsqueeze(0)
-            sims = sims.masked_fill(~occupied_mask, float('-inf'))
-
-            top_scores, top_indices = torch.topk(sims, min(top_k, occupied_mask.sum().item()), dim=-1)
-
-        results = []
-        for idx in top_indices.squeeze(0).tolist():
-            if idx in self.slot_to_value:
-                results.append(self.slot_to_value[idx])
-        return results
-
-    def train(self, epochs: int = 50, lr: float = 0.01, margin: float = 0.2):
-        """Train prototypes to separate keys into distinct slots."""
-        if len(self._train_keys) < 2:
-            print("[SWSTM] Not enough data to train.")
-            return
-
-        keys = torch.stack(self._train_keys)
-
-        # Initialize prototypes from data (critical!)
-        if self.model.write_count.sum() == len(self._train_keys):
-            # First training: initialize from k-means
-            print(f"[SWSTM] Initializing {self.model.num_slots} prototypes from {len(keys)} keys...")
-            self.model.init_prototypes_from_keys(keys)
-
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-
-        print(f"[SWSTM] Training on {len(keys)} keys for {epochs} epochs...")
-        for epoch in range(epochs):
-            optimizer.zero_grad()
-            loss = self.model.margin_loss(keys, margin=margin)
-            loss.backward()
-            optimizer.step()
-
-            if (epoch + 1) % 10 == 0:
-                print(f"  Epoch {epoch+1}/{epochs}, margin_loss={loss.item():.4f}")
-
-        print("[SWSTM] Training complete.")
-
-    def exact_match_accuracy(self, test_keys: List[str], test_values: List[str]) -> float:
-        """Benchmark: exact key lookup (should be high if trained)."""
-        if not test_keys:
-            return 0.0
-        correct = 0
-        for k, v in zip(test_keys, test_values):
-            retrieved = self.get(k, top_k=1)
-            if retrieved and retrieved[0] == v:
-                correct += 1
-        return correct / len(test_keys)
-
-    def paraphrase_accuracy(self, paraphrase_keys: List[str], expected_values: List[str]) -> float:
-        """Benchmark: paraphrase lookup (the real test)."""
-        if not paraphrase_keys:
-            return 0.0
-        correct = 0
-        for k, v in zip(paraphrase_keys, expected_values):
-            retrieved = self.get(k, top_k=1)
-            if retrieved and retrieved[0] == v:
-                correct += 1
-        return correct / len(paraphrase_keys)
-
-    def save(self, path: Union[str, Path]):
-        """Save full engine state."""
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        state = {
-            "model": self.model.get_state(),
-            "slot_to_value": self.slot_to_value,
-            "value_to_slot": self.value_to_slot,
-            "key_dim": self.key_dim,
-            "slot_dim": self.slot_dim,
-        }
-        torch.save(state, path)
-        print(f"[SWSTM] Saved to {path}")
-
-    def load(self, path: Union[str, Path]):
-        """Load full engine state."""
-        state = torch.load(path, map_location=self.device)
-        self.model.set_state(state["model"])
-        self.slot_to_value = state["slot_to_value"]
-        self.value_to_slot = state["value_to_slot"]
-        self.key_dim = state["key_dim"]
-        self.slot_dim = state["slot_dim"]
-        print(f"[SWSTM] Loaded from {path}")
+# In train(), replace the entire method body with:
+def train(self, epochs: int = 50, lr: float = 0.01, margin: float = 0.2):
+    if len(self._train_buffer) < 2:
+        print("[SWSTM] Not enough data to train.")
+        return
+    
+    keys = torch.stack([k for k, _, _ in self._train_buffer])
+    
+    # Initialize prototypes once, then rebuild memory
+    if not hasattr(self.model, '_prototypes_initialized'):
+        print(f"[SWSTM] Initializing {self.model.num_slots} prototypes from {len(keys)} keys...")
+        self.model.init_prototypes_from_keys(keys)
+        self.model._prototypes_initialized = True
+        
+        # CRITICAL: Rebuild memory with new prototypes
+        self.model.memory.zero_()
+        self.model.slot_occupied.zero_()
+        self.model.write_count.zero_()
+        self.slot_to_value.clear()
+        self.value_to_slot.clear()
+        
+        for key_vec, val_vec, value_str in self._train_buffer:
+            slot_idx = self.model.forward(
+                key_vec.unsqueeze(0), val_vec.unsqueeze(0), op="write"
+            ).item()
+            self.slot_to_value[slot_idx] = value_str
+            self.value_to_slot[value_str] = slot_idx
+    
+    optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+    print(f"[SWSTM] Training on {len(keys)} keys for {epochs} epochs...")
+    
+    for epoch in range(epochs):
+        optimizer.zero_grad()
+        loss = self.model.margin_loss(keys, margin=margin)
+        loss.backward()
+        optimizer.step()
+        if (epoch + 1) % 10 == 0:
+            print(f"  Epoch {epoch+1}/{epochs}, margin_loss={loss.item():.4f}")
+    
+    print("[SWSTM] Training complete.")
 
 
 # ================================================================
